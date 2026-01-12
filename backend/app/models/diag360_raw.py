@@ -1,98 +1,63 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text, func
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import Column, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db import Base
 
 
 class Epci(Base):
-    __tablename__ = "epcis"
-    __table_args__ = {"schema": "diag360_raw"}
+    __tablename__ = "epci"
 
-    code_siren = Column(String, primary_key=True)
-    department_code = Column(String)
-    label = Column(Text, nullable=False)
-    legal_form = Column(Text)
-    population_communal = Column(Numeric)
-    population_total = Column(Numeric)
-    area_hectares = Column(Numeric)
-    area_km2 = Column(Numeric)
-    urbanised_area_km2 = Column(Numeric)
-    density_per_km2 = Column(Numeric)
-    department_count = Column(Numeric)
-    region_count = Column(Numeric)
-    member_count = Column(Numeric)
-    delegate_count = Column(Numeric)
-    competence_count = Column(Numeric)
-    fiscal_potential = Column(Numeric)
-    grant_global = Column(Numeric)
-    grant_compensation = Column(Numeric)
-    grant_intercommunality = Column(Numeric)
-    seat_city = Column(Text)
-    source_row = Column(Numeric)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    id = Column("id_epci", String, primary_key=True)
+    label = Column("libelle", Text, nullable=False)
+    department_code = Column("departement_code", Text)
+    region_code = Column("region_code", Text)
+    legal_form = Column("forme_juridique", Text)
+    population_communal = Column("population_commune", Numeric)
+    population_total = Column("population_totale", Numeric)
+    area_km2 = Column("surface_km2", Numeric)
+    urbanised_area_km2 = Column("surface_urbanisee_km2", Numeric)
+    density_per_km2 = Column("densite_km2", Numeric)
+    department_count = Column("nb_departements", Numeric)
+    region_count = Column("nb_regions", Numeric)
+    member_count = Column("nb_membres", Numeric)
+    delegate_count = Column("nb_delegues", Numeric)
+    competence_count = Column("nb_competences", Numeric)
+    fiscal_potential = Column("potentiel_fiscal", Numeric)
+    grant_global = Column("dotation_globale", Numeric)
+    grant_compensation = Column("dotation_compensation", Numeric)
+    grant_intercommunality = Column("dotation_intercommunalite", Numeric)
+    seat_city = Column("ville_siege", Text)
+    source = Column(Text)
+    date_import = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    meta = Column(JSONB, server_default="{}")
 
 
 class IndicatorValue(Base):
-    __tablename__ = "indicator_values"
-    __table_args__ = {"schema": "diag360_raw"}
+    __tablename__ = "valeur_indicateur"
 
-    epci_siren = Column(String, ForeignKey("diag360_raw.epcis.code_siren", ondelete="CASCADE"), primary_key=True)
-    indicator_id = Column(String, ForeignKey("diag360_ref.indicators.id", ondelete="CASCADE"), primary_key=True)
-    data_year = Column(String, primary_key=True, default="0")
-    value = Column(Numeric)
-    unit = Column(Text)
-    source_sheet = Column(Text, default="Table Valeurs")
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    epci_id = Column("id_epci", String, ForeignKey("epci.id_epci", ondelete="CASCADE"), primary_key=True)
+    indicator_id = Column("id_indicateur", String, ForeignKey("indicateur.id_indicateur", ondelete="CASCADE"), primary_key=True)
+    year = Column("annee", Numeric, primary_key=True, default=0)
+    value = Column("valeur_brute", Numeric)
+    unit = Column("unite", Text)
+    source = Column(Text)
+    date_import = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    meta = Column(JSONB, server_default="{}")
 
 
 class IndicatorScore(Base):
-    __tablename__ = "indicator_scores"
-    __table_args__ = {"schema": "diag360_raw"}
+    __tablename__ = "score_indicateur"
 
-    epci_siren = Column(String, ForeignKey("diag360_raw.epcis.code_siren", ondelete="CASCADE"), primary_key=True)
-    indicator_id = Column(String, ForeignKey("diag360_ref.indicators.id", ondelete="CASCADE"), primary_key=True)
-    data_year = Column(String, primary_key=True, default="0")
-    score = Column(Numeric(5, 2))
-    source_sheet = Column(Text, default="Table Scores indicateurs")
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-class ScoreMean(Base):
-    __tablename__ = "score_means"
-    __table_args__ = {"schema": "diag360_raw"}
-
-    epci_siren = Column(String, ForeignKey("diag360_raw.epcis.code_siren", ondelete="CASCADE"), primary_key=True)
-    metric_code = Column(String, primary_key=True)
-    data_year = Column(String, primary_key=True, default="0")
-    value = Column(Numeric(5, 2))
-    source_sheet = Column(Text, default="Table Scores moyens")
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-class NeedScore(Base):
-    __tablename__ = "need_scores"
-    __table_args__ = {"schema": "diag360_raw"}
-
-    epci_siren = Column(String, ForeignKey("diag360_raw.epcis.code_siren", ondelete="CASCADE"), primary_key=True)
-    need_id = Column(String, ForeignKey("diag360_ref.needs.id", ondelete="CASCADE"), primary_key=True)
-    data_year = Column(String, primary_key=True, default="0")
-    need_label = Column(Text)
-    need_score = Column(Numeric(5, 2))
-    indicators_count = Column(Integer)
-    computed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-class TransformationRule(Base):
-    __tablename__ = "transformation_rules"
-    __table_args__ = {"schema": "diag360_raw"}
-
-    indicator_id = Column(String, ForeignKey("diag360_ref.indicators.id", ondelete="CASCADE"), primary_key=True)
-    value_type = Column(Text, primary_key=True)
-    unit = Column(Text)
-    min_value = Column(Numeric)
-    max_value = Column(Numeric)
-    bound_type = Column(Text)
-    regression_type = Column(Text)
-    notes = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    epci_id = Column("id_epci", String, ForeignKey("epci.id_epci", ondelete="CASCADE"), primary_key=True)
+    indicator_id = Column("id_indicateur", String, ForeignKey("indicateur.id_indicateur", ondelete="CASCADE"), primary_key=True)
+    year = Column("annee", Numeric, primary_key=True, default=0)
+    indicator_score = Column("score_indicateur", Numeric(5, 2))
+    need_id = Column("id_besoin", String, ForeignKey("besoin.id_besoin"))
+    need_score = Column("score_besoin", Numeric(5, 2))
+    objective_id = Column("id_objectif", String, ForeignKey("objectif.id_objectif"))
+    objective_score = Column("score_objectif", Numeric(5, 2))
+    type_id = Column("id_type", String, ForeignKey("type_indicateur.id_type"))
+    type_score = Column("score_type", Numeric(5, 2))
+    global_score = Column("score_global", Numeric(5, 2))
+    report = Column("rapport", JSONB)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

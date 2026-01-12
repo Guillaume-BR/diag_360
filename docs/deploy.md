@@ -6,43 +6,25 @@
 2. Renseigner `.env` (copie depuis `.env.example`) avec les secrets Postgres, NocoDB, etc.
 3. Vérifier que Docker et le plugin Compose sont installés.
 
-## Script `scripts/run_pipeline.sh`
-
-Ce script centralise les commandes `docker compose` courantes.
-
-```
-Usage: scripts/run_pipeline.sh <commande> [options]
-
-Commandes principales :
-  up                     Démarre les services (mode détaché).
-  down                   Stoppe et supprime les services.
-  logs                   Suit les logs backend, frontend, nocodb.
-  ingest [fichier]       Lance l’ingestion XLSX (défaut: ./Diag360_EvolV2.xlsx).
-  need-scores [année]    Calcule les scores besoins (défaut: 0).
-  fetch <url>            Appelle un endpoint JSON externe via le CLI backend.
-  shell                  Ouvre un shell interactif dans le conteneur backend.
-
-Variables d’environnement :
-  COMPOSE_COMMAND        Par défaut `docker compose`.
-  DATA_FILE              Fichier XLSX par défaut pour `ingest`.
-  DATA_YEAR              Année par défaut pour `need-scores`.
-```
-
-Exemples :
+## Commandes principales
 
 ```bash
-# Construire et démarrer les services
-./scripts/run_pipeline.sh up --build
+# Démarrer la stack
+docker compose up -d db backend frontend nocodb
 
-# Importer un classeur spécifique
-DATA_FILE=/srv/data/Diag360_EvolV3.xlsx ./scripts/run_pipeline.sh ingest
+# Recréer complètement Postgres (dropping data !)
+docker compose down
+sudo rm -rf docker-data/postgres
+docker compose up -d db
 
-# Recalculer les scores besoins pour l’année 2023
-./scripts/run_pipeline.sh need-scores 2023
+# Ingestion Excel
+docker compose run --rm backend_ingest --file /data/Diag360_EvolV2.xlsx
 
-# Tester un fetch JSON
-./scripts/run_pipeline.sh fetch https://api.exemple.org/indicateurs
+# Seeder des scores fictifs
+python backend/scripts/seed_fake_scores.py --year 2025
 ```
+
+> `scripts/run_pipeline.sh` reste disponible mais il est recommandé d’utiliser directement les commandes ci-dessus pour plus de lisibilité.
 
 ## Reverse proxy (Caddy)
 
@@ -55,8 +37,9 @@ docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 
 ## Séquence type
 
-1. `./scripts/run_pipeline.sh up --build`
-2. `./scripts/run_pipeline.sh ingest /srv/data/Diag360_EvolV2.xlsx`
-3. `./scripts/run_pipeline.sh need-scores 0`
-4. Configurer/valider les routes Caddy.
-5. Vérifier les services (`./scripts/run_pipeline.sh logs`).
+1. `docker compose up -d`
+2. `docker compose run --rm backend_ingest --file /data/Diag360_EvolV2.xlsx`
+3. (Optionnel) lancer les scripts `backend/scripts/api/…` puis `backend/scripts/scores/…`
+4. Ajouter des scores de test (`python backend/scripts/seed_fake_scores.py --year 2025`)
+5. Configurer/valider les routes Caddy.
+6. Vérifier les services (`docker compose logs -f backend frontend nocodb`).

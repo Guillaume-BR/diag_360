@@ -1,36 +1,73 @@
-# Frontend Diag360
+# Welcome to your Lovable project
 
-Application React/Vite (TypeScript + shadcn-ui) consommant l’API FastAPI (`VITE_API_BASE_URL`).
+## Project info
 
-## Démarrage local
+**URL**: https://lovable.dev/projects/aa2e4d93-7d59-4fdb-a823-3d0862821b17
 
-```bash
-cd front
-npm install
+## How can I edit this code?
+
+There are several ways of editing your application.
+
+**Use Lovable**
+
+Simply visit the [Lovable Project](https://lovable.dev/projects/aa2e4d93-7d59-4fdb-a823-3d0862821b17) and start prompting.
+
+Changes made via Lovable will be committed automatically to this repo.
+
+**Use your preferred IDE**
+
+If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+
+The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+
+Follow these steps:
+
+```sh
+# Step 1: Clone the repository using the project's Git URL.
+git clone <YOUR_GIT_URL>
+
+# Step 2: Navigate to the project directory.
+cd <YOUR_PROJECT_NAME>
+
+# Step 3: Install the necessary dependencies.
+npm i
+
+# Step 4: Start the development server with auto-reloading and an instant preview.
 npm run dev
 ```
 
-Variables utiles (fichier `.env` à la racine `front/`) :
+**Edit a file directly in GitHub**
 
-```
-VITE_API_BASE_URL=http://localhost:8000/api
-```
+- Navigate to the desired file(s).
+- Click the "Edit" button (pencil icon) at the top right of the file view.
+- Make your changes and commit the changes.
 
-## Build Docker
+**Use GitHub Codespaces**
 
-L’image utilisée dans `docker-compose.yml` reprend le Dockerfile suivant :
+- Navigate to the main page of your repository.
+- Click on the "Code" button (green button) near the top right.
+- Select the "Codespaces" tab.
+- Click on "New codespace" to launch a new Codespace environment.
+- Edit files directly within the Codespace and commit and push your changes once you're done.
 
-```bash
-docker build -t diag360-frontend .
-```
+## What technologies are used for this project?
 
-## Structure
+This project is built with:
 
-- `src/api` : client HTTP (fetch), wrappers pour territoires et rapports.
-- `src/components` : UI shadcn + composants métier (radar, cartes, modales).
-- `src/data` : données statiques / mocks pour démonstrations hors API.
+- Vite
+- TypeScript
+- React
+- shadcn-ui
+- Tailwind CSS
 
-## Déploiement
+## How can I deploy this project?
 
-Le conteneur est relié au réseau `diag360-ntw` et servi par Caddy via `serv1.diag360.org`.
-Consultez `docs/caddy.md` à la racine pour ajouter d’autres routes ou recharger Caddy.
+Simply open [Lovable](https://lovable.dev/projects/aa2e4d93-7d59-4fdb-a823-3d0862821b17) and click on Share -> Publish.
+
+## Can I connect a custom domain to my Lovable project?
+
+Yes, you can!
+
+To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+
+Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)

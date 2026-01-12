@@ -18,21 +18,23 @@ La variable d'environnement `NC_DB` dans `docker-compose.yml` pointe déjà vers
 
 ## 3. Organisation recommandée
 
-| Schéma | Contenu | Usage NocoDB |
-|--------|---------|---------------|
-| `public` | Table `territories` (API actuelle) | Lecture seule pour vérification rapide. |
-| `diag360_ref` | Besoins, indicateurs, objectifs, types, vues de synthèse | Full CRUD pour piloter le référentiel métier. |
-| `diag360_raw` | Tables "Table EPCI", valeurs, scores, règles de transformation | Édition contrôlée. Conserver l'historique des imports Excel. |
+Depuis la refonte, les tables principales vivent dans le schéma `public`. Pour simplifier :
+
+| Vues/Tables | Contenu | Actions |
+|-------------|---------|---------|
+| `vue_indicateur_details` | Indicateurs + besoins/objectifs/types (relations via `indicateur_*`) | Lecture/édition des métadonnées |
+| `epci` | Liste des EPCI (SIREN, label, stats) | Lecture/édition limitée |
+| `valeur_indicateur` | Valeurs brutes (EPCI × indicateur × année) – alimentées par les scripts/API | Lecture + corrections ponctuelles |
+| `score_indicateur` | Scores calculés par indicateur (besoin/objectifs/types) | Lecture seule (produits par les scripts de scoring) |
+| `score_global` | Scores agrégés par EPCI (global + composantes) | Lecture seule (produits par les scripts de scoring global) |
+| `territories` | Table existante pour le front historique | Lecture |
 
 ### Étapes dans NocoDB
 
-1. Dans le workspace créé par défaut, cliquer sur **Create Project** ▶ **Existing DB**.
-2. Sélectionner la connexion `diag360`.
-3. Choisir les schémas à exposer (au minimum `diag360_ref`, `diag360_raw`, `public`).
-4. Pour chaque table :
-   - Renommer les vues pour refléter leurs usages (ex. `Référentiel > Besoins`).
-   - Configurer les formules / relations (ex. `indicator_need_links.indicator_id → indicators.id`).
-   - Ajouter des filtres pour masquer les colonnes techniques (`created_at`, `updated_at`) si nécessaire.
+1. Dans le workspace, cliquer sur **Create Project → Existing DB**.
+2. Utiliser la connexion par défaut (`NC_DB`). Laisser le champ *Schema* vide pour accéder à `public`.
+3. Ajouter les tables/vues (`epci`, `indicateur`, `valeur_indicateur`, `score_indicateur`, `vue_indicateur_details`).
+4. Ajouter des relations (ex. `score_indicateur.id_epci → epci.id_epci`) pour faciliter les formulaires.
 
 ### Permissions
 

@@ -4,26 +4,22 @@
 
 ```
 ┌─────────────┐     HTTPS      ┌──────────────┐        SQL / REST        ┌──────────────┐
-│  Front-end  │ ─────────────▶ │  API Python  │ ───────────────────────▶ │   PostgreSQL │
-│ (Vite/React)│ ◀───────────── │  (FastAPI)   │ ◀──────────────┐        │ (diag360_db) │
+│  Front-end  │ ─────────────▶ │  API Python  │ ───────────────────────▶ │  PostgreSQL  │
+│ (Vite/React)│ ◀───────────── │  (FastAPI)   │ ◀──────────────┐        │  (tables FR) │
 └─────────────┘   JSON (REST)  └──────┬───────┘              │          └──────┬───────┘
                                       │                      │                 │
+                                      │    scripts backend/scripts/ (API + scores)
                                       │                      │                 │
-                                      │          CLI scoring scripts           │
-                                     │   (ingest_workbook, need_scores, etc.) │
-                                     │                                         │
-                                      │                                         │
-                                      ▼                                         │
-                             ┌────────────────┐                                 │
-                             │  Report CLI & │                                 │
-                             │ calc scripts  │                                 │
-                             └──────┬────────┘                                 │
-                                    │                                           │
-                                    │  Read-only                                │
-                                    ▼                                           │
-                              ┌──────────────┐                                   │
-                              │   NocoDB     │ ◀─────────────────────────────────┘
-                              │ (admin UI)   │  direct SQL (managed schema)
+                                      ▼                      ▼                 │
+                             ┌────────────────┐        ┌──────────────┐        │
+                             │  CLI ingestion │        │  Scripts API │        │
+                             │ (Excel)        │        │ / scoring    │        │
+                             └──────┬────────┘        └──────┬───────┘        │
+                                    │                       │                 │
+                                    ▼                       ▼                 │
+                              ┌──────────────┐              │                 │
+                              │   NocoDB     │ ◀────────────┘                 │
+                              │ (admin UI)   │  lecture/écriture directe       │
                               └──────────────┘
 ```
 
@@ -46,13 +42,10 @@
      - `POST /api/ingest/xlsx` (CLI) : charge les données brutes issues du fichier Excel fourni.
    - Gère la connexion PostgreSQL et expose un service de calcul (placeholder) pour préparer l’arrivée des scripts Python définitifs.
 
-3. **Base de données PostgreSQL (`diag360_db`)**
-   - Schéma `public` : table `territories` consommée par l’API actuelle.
-   - Schéma `diag360_ref` : référentiel issu de `Diag360_EvolV2.xlsx` (besoins, indicateurs, objectifs, types, vues de synthèse).
-   - Schéma `diag360_raw` : données brutes des onglets Excel (EPCI, valeurs, scores, règles de transformation).
-   - dbt pourra consommer ces schémas pour bâtir `stg_` et `mart_`.
-   - Scripts SQL dans `docker/postgres/init/001_*.sql` et `002_create_diag360_schema.sql`.
-   - Schéma relationnel documenté dans `Diag360_schema.svg` (remplace l’ancien MCD Draw.io).
+3. **Base de données PostgreSQL**
+   - Schéma `public` : tables métier françaises (`epci`, `indicateur`, `besoin`, `objectif`, `type_indicateur`, `valeur_indicateur`, `score_indicateur`) + `territories` pour la compatibilité actuelle.
+   - `docker/postgres/init/002_create_diag360_schema.sql` crée ces tables et des vues (`vue_indicateur_details`, `vue_scores_epci`) exposées au backend/NocoDB.
+   - Les scripts d’ingestion et de scoring écrivent directement dans ces tables ; dbt reste optionnel si besoin d’analyses avancées.
 
 4. **NocoDB**
    - Connecté en lecture/écriture au même PostgreSQL (service `nocodb` dans `docker-compose.yml`).

@@ -1,36 +1,30 @@
 import { TerritoryData } from "@/types/territory";
 
-const parseNullableNumber = (value: any): number | null => {
-  if (value === null || value === undefined) return null;
-  const parsed = Number(value);
-  return Number.isNaN(parsed) ? null : parsed;
-};
-
 /**
- * Maps API responses to the TerritoryData type.
+ * Maps a database territory record to the TerritoryData type.
  */
-export const mapApiToTerritoryData = (record: any): TerritoryData => {
+export const mapDbToTerritoryData = (dbRecord: any): TerritoryData => {
   return {
-    id: record.id,
-    code_siren: record.code_siren,
-    name: record.name,
-    type: record.type ?? null,
-    population: record.population ?? null,
-    department: record.department ?? null,
-    region: record.region ?? null,
-    score: parseNullableNumber(record.score) ?? 0,
-    score_water: parseNullableNumber(record.score_water),
-    score_food: parseNullableNumber(record.score_food),
-    score_housing: parseNullableNumber(record.score_housing),
-    score_healthcare: parseNullableNumber(record.score_healthcare),
-    score_security: parseNullableNumber(record.score_security),
-    score_education: parseNullableNumber(record.score_education),
-    score_social_cohesion: parseNullableNumber(record.score_social_cohesion),
-    score_nature: parseNullableNumber(record.score_nature),
-    score_local_economy: parseNullableNumber(record.score_local_economy),
-    score_energy: parseNullableNumber(record.score_energy),
-    score_mobility: parseNullableNumber(record.score_mobility),
-    data_year: record.data_year ?? null,
+    id: dbRecord.id,
+    code_siren: dbRecord.code_siren,
+    name: dbRecord.name,
+    type: dbRecord.type,
+    population: dbRecord.population,
+    department: dbRecord.department,
+    region: dbRecord.region,
+    score: Number(dbRecord.score),
+    score_water: dbRecord.score_water != null ? Number(dbRecord.score_water) : null,
+    score_food: dbRecord.score_food != null ? Number(dbRecord.score_food) : null,
+    score_housing: dbRecord.score_housing != null ? Number(dbRecord.score_housing) : null,
+    score_healthcare: dbRecord.score_healthcare != null ? Number(dbRecord.score_healthcare) : null,
+    score_security: dbRecord.score_security != null ? Number(dbRecord.score_security) : null,
+    score_education: dbRecord.score_education != null ? Number(dbRecord.score_education) : null,
+    score_social_cohesion: dbRecord.score_social_cohesion != null ? Number(dbRecord.score_social_cohesion) : null,
+    score_nature: dbRecord.score_nature != null ? Number(dbRecord.score_nature) : null,
+    score_local_economy: dbRecord.score_local_economy != null ? Number(dbRecord.score_local_economy) : null,
+    score_energy: dbRecord.score_energy != null ? Number(dbRecord.score_energy) : null,
+    score_mobility: dbRecord.score_mobility != null ? Number(dbRecord.score_mobility) : null,
+    data_year: dbRecord.data_year,
   };
 };
 

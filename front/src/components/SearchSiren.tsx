@@ -3,9 +3,9 @@ import { Search, AlertCircle, Building2, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
-import { searchTerritories, getTerritoryByCode } from "@/api/territories";
+import { supabase } from "@/integrations/supabase/client";
 import { TerritoryData } from "@/types/territory";
-import { mapApiToTerritoryData } from "@/utils/territoryMapper";
+import { mapDbToTerritoryData } from "@/utils/territoryMapper";
 import { z } from "zod";
 
 interface SearchSirenProps {
@@ -28,12 +28,15 @@ export const SearchSiren = ({ onTerritoryFound }: SearchSirenProps) => {
         return;
       }
 
-      try {
-        const results = await searchTerritories(siren, 8);
-        setSuggestions(results.map((item) => ({ code_siren: item.code_siren, name: item.name })));
-        setShowSuggestions(results.length > 0);
-      } catch (error) {
-        console.error("Autocomplete error", error);
+      const { data, error } = await supabase
+        .from("territories")
+        .select("code_siren, name")
+        .or(`name.ilike.%${siren}%,code_siren.ilike.%${siren}%`)
+        .limit(8);
+
+      if (!error && data) {
+        setSuggestions(data);
+        setShowSuggestions(data.length > 0);
       }
     };
 
@@ -57,26 +60,33 @@ export const SearchSiren = ({ onTerritoryFound }: SearchSirenProps) => {
 
     const searchTerm = validation.data;
 
-    try {
-      const results = await searchTerritories(searchTerm, 1);
-      const match = results[0];
-      if (match) {
-        onTerritoryFound(mapApiToTerritoryData(match));
-        toast({
-          title: "EPCI trouvé",
-          description: `${match.name} a été trouvé.`,
-        });
-      } else {
-        toast({
-          title: "EPCI non trouvé",
-          description: "Aucun territoire ne correspond à votre recherche.",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
+    const { data, error } = await supabase
+      .from("territories")
+      .select("*")
+      .or(`code_siren.eq.${searchTerm},name.ilike.%${searchTerm}%`)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
       toast({
         title: "Erreur",
         description: "Une erreur est survenue lors de la recherche.",
+        variant: "destructive",
+      });
+      setIsSearching(false);
+      return;
+    }
+
+    if (data) {
+      onTerritoryFound(mapDbToTerritoryData(data));
+      toast({
+        title: "EPCI trouvé",
+        description: `${data.name} a été trouvé.`,
+      });
+    } else {
+      toast({
+        title: "EPCI non trouvé",
+        description: "Aucun territoire ne correspond à votre recherche.",
         variant: "destructive",
       });
     }
@@ -88,13 +98,14 @@ export const SearchSiren = ({ onTerritoryFound }: SearchSirenProps) => {
     setSiren(epci.name);
     setShowSuggestions(false);
 
-    try {
-      const data = await getTerritoryByCode(epci.code_siren);
-      if (data) {
-        onTerritoryFound(mapApiToTerritoryData(data));
-      }
-    } catch (error) {
-      console.error("Failed to fetch territory", error);
+    const { data } = await supabase
+      .from("territories")
+      .select("*")
+      .eq("code_siren", epci.code_siren)
+      .maybeSingle();
+
+    if (data) {
+      onTerritoryFound(mapDbToTerritoryData(data));
     }
   };
 

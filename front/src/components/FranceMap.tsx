@@ -6,8 +6,8 @@ import {
   ZoomableGroup,
 } from "react-simple-maps";
 import { TerritoryData, getScoreColor } from "@/types/territory";
-import { listTerritories } from "@/api/territories";
-import { mapApiToTerritoryData, createMockTerritoryData } from "@/utils/territoryMapper";
+import { supabase } from "@/integrations/supabase/client";
+import { mapDbToTerritoryData, createMockTerritoryData } from "@/utils/territoryMapper";
 import { Loader2, AlertTriangle, RefreshCcw, Database, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -133,18 +133,14 @@ const FranceMapContent = ({ onTerritoryClick }: FranceMapProps) => {
     type: string;
   } | null>(null);
 
-  // Load territories from API
+  // Load territories from database
   useEffect(() => {
     const loadDbTerritories = async () => {
-      try {
-        const { items } = await listTerritories({ limit: 2000, order_by: "name" });
+      const { data } = await supabase.from("territories").select("*");
+      if (data) {
         const map = new Map<string, TerritoryData>();
-        items.forEach((territory) => {
-          map.set(territory.code_siren, mapApiToTerritoryData(territory));
-        });
+        data.forEach((t) => map.set(t.code_siren, mapDbToTerritoryData(t)));
         setDbTerritories(map);
-      } catch (error) {
-        console.error("Failed to load territories from API", error);
       }
     };
     loadDbTerritories();
