@@ -1,3 +1,6 @@
+# Adaptation du template API existant pour une source CSV
+# Objectif : faciliter la généralisation à d'autres indicateurs non-APIs
+
 """
 Indicateur i032 : Part des logements en situation de sur-occupation
 
@@ -62,14 +65,16 @@ def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def transform_df_to_raw_values(df: pd.DataFrame) -> Iterator[RawValue]:
     for _, row in df.iterrows():
-        if pd.isna(row["value"]):
+        try:
+            value = float(row["value"])
+        except (ValueError, TypeError):
             continue
 
         yield RawValue(
             epci_id=str(row["epci_id"]),
             indicator_id=row["indicator_id"],
             year=int(row["year"]),
-            value=float(row["value"]),
+            value=value,
             unit=str(row["unit"]),
             source=row["source"],
             meta={}
