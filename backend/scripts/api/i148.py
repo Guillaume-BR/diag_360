@@ -61,10 +61,9 @@ def get_raw_dir() -> Path:
 
 
 def fetch_api_payload() -> pd.DataFrame:
-    """Télécharge le fichier des pharmacies et retourne le DataFrame + le chemin raw_dir."""
+    """Charge le fichier des urgences et retourne le DataFrame"""
 
     raw_dir = get_raw_dir()
-    logger.info("Téléchargement des données de pharmacies")
 
     # Lire le CSV
     path_file = raw_dir / "dist_urgence.csv"
@@ -72,7 +71,7 @@ def fetch_api_payload() -> pd.DataFrame:
         raise FileNotFoundError(
             f"Fichier {path_file} introuvable dans le dossier {raw_dir}"
         )
-
+    logger.info("Téléchargement des données de urgences")
     return pd.read_csv(path_file, skiprows=2)
 
 
@@ -172,7 +171,7 @@ def ensure_indicator_exists(session, indicator_id: str) -> None:
         session.commit()
 
 
-def run(indicator_id: str, year: int) -> None:
+def run(indicator_id: str) -> None:
     """Exécution principale."""
     session = SessionLocal()
     try:
