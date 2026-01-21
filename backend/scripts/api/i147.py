@@ -33,11 +33,10 @@ from utils.functions import *
 logger = logging.getLogger(__name__)
 
 # Configuration
-URL = "https://www.data.gouv.fr/api/1/datasets/r/2ce43ade-8d2c-4d1d-81da-ca06c82abc68"
 DEFAULT_INDICATOR_ID = "i147"
-DEFAULT_YEAR = 2024  # Année fictive car indicateur cumulatif
+DEFAULT_YEAR = 2024 
 DEFAULT_SOURCE = (
-    "https://www.data.gouv.fr/api/1/datasets/r/2ce43ade-8d2c-4d1d-81da-ca06c82abc68"
+    "https://cartosante.atlasante.fr/#c=indicator&f=7&i=prox_struct.dist_str&s=2024&t=A01&view=map12"
 )
 
 
@@ -90,7 +89,7 @@ def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
         "Distance à la pharmacie la plus proche 2024": "dist_pharma_min",
     }
 
-    df_dist_pharma = df_dist_pharma.df().rename(columns=mapping_pharma)
+    df = df.rename(columns=mapping_pharma)
 
     # Jointure des données distance moyenne aux pharmacies
     query = """
@@ -100,8 +99,8 @@ def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
         ROUND(AVG(TRY_CAST(dist_pharma_min AS DOUBLE)),2) AS valeur_brute,
         '2024' AS annee
     FROM df_com
-    LEFT JOIN df_dist_pharma
-    ON df_com.code_insee = df_dist_pharma.code_insee
+    LEFT JOIN df
+    ON df_com.code_insee = df.code_insee
     WHERE epci_code != 'ZZZZZZZZZ'
     GROUP BY epci_code
     """
