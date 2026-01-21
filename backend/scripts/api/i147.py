@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-Script pour alimenter `valeur_indicateur` avec les données CatNat (GASPAR).
-Calcule le nombre de catastrophes naturelles par km² par EPCI.
+Indicateur i147 : Distance moyenne à la pharmacie la plus proche par EPCI
+Source : Cartosanté
+URL : https://cartosante.atlasante.fr/#bbox=-596705,6177797,1317757,786225&c=indicator&i=offre_ps.dist_phie&s=2024&view=map12
+
 """
 from __future__ import annotations
 
 import argparse
 import json
 import logging
-import os
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 import sys
 from typing import Iterable, Iterator  # ✅ Correction
-import zipfile
 
 import pandas as pd
 import duckdb
@@ -34,12 +33,13 @@ from utils.functions import *
 logger = logging.getLogger(__name__)
 
 # Configuration
-URL = (
-    "https://www.data.gouv.fr/api/1/datasets/r/2ce43ade-8d2c-4d1d-81da-ca06c82abc68"
-)
+URL = "https://www.data.gouv.fr/api/1/datasets/r/2ce43ade-8d2c-4d1d-81da-ca06c82abc68"
 DEFAULT_INDICATOR_ID = "i147"
 DEFAULT_YEAR = 2024  # Année fictive car indicateur cumulatif
-DEFAULT_SOURCE = "https://www.data.gouv.fr/api/1/datasets/r/2ce43ade-8d2c-4d1d-81da-ca06c82abc68"
+DEFAULT_SOURCE = (
+    "https://www.data.gouv.fr/api/1/datasets/r/2ce43ade-8d2c-4d1d-81da-ca06c82abc68"
+)
+
 
 @dataclass
 class RawValue:
@@ -52,30 +52,34 @@ class RawValue:
     meta: dict | None = None
 
 
-def fetch_api_payload() -> tuple[pd.DataFrame, Path]:
-    """Télécharge le fichier des pharmacies et retourne le DataFrame + le chemin raw_dir."""
-    
+def get_raw_dir() -> Path:
+    """Retourne le chemin du répertoire source, le crée si nécessaire."""
     base_dir = Path(__file__).resolve().parent.parent
     raw_dir = base_dir / "source"
     raw_dir.mkdir(parents=True, exist_ok=True)
+    return raw_dir
 
+
+def fetch_api_payload() -> pd.DataFrame:
+    """Télécharge le fichier des pharmacies et retourne le DataFrame + le chemin raw_dir."""
+
+    raw_dir = get_raw_dir()
     logger.info("Téléchargement des données de pharmacies")
-    
-    #Lire le CSV
+
+    # Lire le CSV
     path_file = raw_dir / "dist_pharma.csv"
     if not path_file.exists():
-        raise FileNotFoundError(f"Fichier {path_file} introuvable dans le dossier {raw_dir}")
-    
-    # chargement des données
-    df_dist_pharma = duckdb.read_csv(raw_dir / "dist_pharma.csv", skiprows=2).df()
-    logger.info(f"Chargé {len(df_dist_pharma)} lignes")
+        raise FileNotFoundError(
+            f"Fichier {path_file} introuvable dans le dossier {raw_dir}"
+        )
 
-    return df_dist_pharma, raw_dir
+    return pd.read_csv(path_file, skiprows=2)
 
 
-def transform_payload(df_dist_pharma: pd.DataFrame, raw_dir: Path, indicator_id: str, year: int) -> Iterator[RawValue]:
+def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
+    raw_dir = get_raw_dir()
     # Création du dataframe des communes (cf functions.py)
     df_com = create_dataframe_communes(raw_dir)
 
@@ -102,19 +106,19 @@ def transform_payload(df_dist_pharma: pd.DataFrame, raw_dir: Path, indicator_id:
     GROUP BY epci_code
     """
 
-    df_dist_pharma = duckdb.sql(query)
+    return duckdb.sql(query).df()
 
-    results = df_dist_pharma.df()
-    logger.info(f"Calculé {len(results)} valeurs d'indicateur")
 
-    for _, row in results.iterrows():
+def transform_payload(df: pd.DataFrame) -> Iterator[RawValue]:
+    """Transforme le DataFrame en itérable de RawValue"""
+    for _, row in df.iterrows():
         if pd.isna(row["valeur_brute"]):
             continue
 
         yield RawValue(
             epci_id=str(row["id_epci"]),
-            indicator_id=indicator_id,
-            year=year,
+            indicator_id=str(row["id_indicator"]),
+            year=str(row["annee"]),
             value=float(row["valeur_brute"]),
             unit="km",
             source=DEFAULT_SOURCE,
@@ -123,7 +127,7 @@ def transform_payload(df_dist_pharma: pd.DataFrame, raw_dir: Path, indicator_id:
 
 
 def persist_values(session, rows: Iterable[RawValue]) -> int:
-    """Persiste les valeurs en base de données."""
+    """Insérer ou mettre à jour les valeurs brutes."""
     inserted = 0
     for row in rows:
         record = IndicatorValue(
@@ -161,12 +165,13 @@ def run(indicator_id: str, year: int) -> None:
     session = SessionLocal()
     try:
         ensure_indicator_exists(session, indicator_id)
-        
+
         # Téléchargement et extraction
-        df_cat_nat, raw_dir = fetch_api_payload()
-        
+        df = fetch_api_payload()
+        df_processed = clean_and_prepare_df(df)
+
         # Transformation
-        rows = list(transform_payload(df_cat_nat, raw_dir, indicator_id=indicator_id, year=year))
+        rows = list(transform_payload(df_processed))
 
         if not rows:
             logger.warning("Aucune donnée calculée.")
@@ -179,38 +184,42 @@ def run(indicator_id: str, year: int) -> None:
         session.close()
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Import CatNat GASPAR -> valeur_indicateur"
+        description="Import des données de distance aux pharmacies -> i147"
     )
     parser.add_argument(
         "--indicator",
         default=DEFAULT_INDICATOR_ID,
-        help="ID indicateur (ex: i158)",
-    )
-    parser.add_argument(
-        "--year", type=int, default=DEFAULT_YEAR, help="Année de référence"
+        help="i147",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Affiche les résultats sans insérer"
     )
+    return parser
 
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+    parser = build_parser()
     args = parser.parse_args()
 
     if args.dry_run:
-        df_cat_nat, raw_dir = fetch_api_payload()
-        rows = list(
-            transform_payload(df_cat_nat, raw_dir, indicator_id=args.indicator, year=args.year)
-        )
+        df = fetch_api_payload()
+        df_processed = clean_and_prepare_df(df)
+        rows = list(transform_payload(df_processed))
         print(
             json.dumps(
-                [row.__dict__ for row in rows[:10]], indent=2, ensure_ascii=False, default=str)
+                [row.__dict__ for row in rows[:10]],
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            )
         )
         print(f"... (10 premières lignes sur {len(rows)})")
         return
 
-    run(indicator_id=args.indicator, year=args.year)
+    run(indicator_id=args.indicator)
 
 
 if __name__ == "__main__":
