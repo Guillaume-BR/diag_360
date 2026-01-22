@@ -16,19 +16,18 @@ from typing import Iterable, Iterator  # ✅ Correction
 
 import pandas as pd
 import duckdb
-import requests
 from sqlalchemy import select
 
 # Remonte de 3 niveaux : api/ -> scripts/ -> backend/
 backend_path = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(backend_path))
-from app.db import SessionLocal
 from app.models import Indicator, IndicatorValue
+from app.db import SessionLocal
 
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import download_file, create_dataframe_epci
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +48,12 @@ class RawValue:
     source: str | None = None
     meta: dict | None = None
 
-
 def get_raw_dir() -> Path:
     """Retourne le chemin du répertoire source, le crée si nécessaire."""
     base_dir = Path(__file__).resolve().parent.parent
     raw_dir = base_dir / "source"
     raw_dir.mkdir(parents=True, exist_ok=True)
     return raw_dir
-
 
 def dl_data_phyto() -> pd.DataFrame:
     """Charge le fichier des lieux de covoiturage et retourne le DataFrame"""
@@ -89,48 +86,50 @@ def clean_and_prepare_df(df_phyto: pd.DataFrame, df_sau: pd.DataFrame) -> pd.Dat
     # Téléchargement de la table epci
     df_epci = create_dataframe_epci(raw_dir)
 
-    # jointure avec epci
+    #Préparation de df_sau : on ne garde que 2020
+    query_sau = """ 
+    SELECT 
+        geocode_epci, 
+        ROUND(TRY_CAST(valeur AS DOUBLE), 2) AS sau_ha
+    FROM df_sau
+    WHERE geocode_epci NOT LIKE 'Z%' AND date_mesure LIKE '2020%'
+    """
+    
+    df_sau = duckdb.sql(query_sau)
+
+    # jointure phyto et epci
     query_merged_phyto = """ 
         SELECT
             phyto.annee,
             TRY_CAST(phyto.quantite_substance AS DOUBLE) AS quantite_substance,
             epci.siren
-        FROM data_phyto AS phyto
-        INNER JOIN data_epci AS epci
+        FROM df_phyto AS phyto
+        INNER JOIN df_epci AS epci
             ON epci.insee = phyto.code_insee
         """
 
     merged_phyto = duckdb.sql(query_merged_phyto)
 
+    # Calcul de la moyenne annuelle par EPCI
     query_avg = """ 
-    WITH nb_years AS (
+    WITH df_temp AS (
         SELECT
             siren,
-            COUNT(DISTINCT annee) AS n_years
-        FROM merged_phyto
-        GROUP BY siren
-    ),
-
-    total_phyto AS (
-        SELECT
-            siren,
+            COUNT(DISTINCT annee) AS n_years,
             SUM(quantite_substance) AS total_quantite_substance
         FROM merged_phyto
         GROUP BY siren
     )
 
     SELECT
-        tp.siren as id_epci
-        (1.0*tp.total_quantite_substance / ny.n_years) AS avg_annual_phyto,
-        '2023' AS annee
-    FROM total_phyto AS tp
-    INNER JOIN nb_years AS ny
-        ON tp.siren = ny.siren
+        siren as id_epci,
+        (1.0*total_quantite_substance / n_years) AS avg_annual_phyto
+    FROM df_temp
     """
 
     avg_annual_phyto = duckdb.sql(query_avg)
 
-    # On ramène to ça à la surface agricole utile
+    # On ramène tout ça à la surface agricole utile
     query_bdd = """
     SELECT
         aap.siren as id_epci,
@@ -138,7 +137,7 @@ def clean_and_prepare_df(df_phyto: pd.DataFrame, df_sau: pd.DataFrame) -> pd.Dat
         ROUND((1.0 * aap.avg_annual_phyto / ds.sau_ha), 3) AS valeur_brute,
         '2023' AS annee
     FROM avg_annual_phyto AS aap
-    INNER JOIN data_sau AS ds
+    INNER JOIN df_sau AS ds
         ON aap.siren = ds.geocode_epci
     """
 
