@@ -38,6 +38,7 @@ DEFAULT_INDICATOR_ID = "i150"
 DEFAULT_YEAR = 2024  # Année fictive car indicateur cumulatif
 DEFAULT_SOURCE = "i150.csv"
 
+
 @dataclass
 class RawValue:
     epci_id: str

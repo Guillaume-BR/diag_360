@@ -70,7 +70,7 @@ def fetch_api_payload() -> pd.DataFrame:
             f"Fichier {path_file} introuvable dans le dossier {raw_dir}"
         )
     logger.info("Téléchargement des données du nombre de lieux de covoiturage")
-    return pd.read_csv(path_file, sep = ",")
+    return pd.read_csv(path_file, sep=",")
 
 
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:

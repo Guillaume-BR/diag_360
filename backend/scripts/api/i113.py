@@ -35,10 +35,8 @@ logger = logging.getLogger(__name__)
 # Configuration
 URL = "https://www.data.gouv.fr/api/1/datasets/r/dbdd3481-107b-4eed-b66a-7f9dda1c7b78"
 DEFAULT_INDICATOR_ID = "i113"
-DEFAULT_YEAR = 2025  
-DEFAULT_SOURCE = (
-    "data.gouv.fr"
-)
+DEFAULT_YEAR = 2025
+DEFAULT_SOURCE = "data.gouv.fr"
 
 
 @dataclass
@@ -72,7 +70,7 @@ def fetch_api_payload() -> pd.DataFrame:
     download_file(url, extract_to=raw_dir, filename="sau_2025.csv")
     path_file = raw_dir / "sau_2025.csv"
     logger.info("Téléchargement des données des sau")
-    return pd.read_csv(path_file, sep = ",")
+    return pd.read_csv(path_file, sep=",")
 
 
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:

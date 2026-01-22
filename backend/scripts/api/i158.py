@@ -202,6 +202,7 @@ def run(indicator_id: str) -> None:
     finally:
         session.close()
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Téléchargement de données -> i158")
     parser.add_argument("--indicator", default=DEFAULT_INDICATOR_ID, help="i158")
@@ -211,6 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="N'insère rien en base, affiche seulement les lignes qui seraient importées.",
     )
     return parser
+
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")

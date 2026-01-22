@@ -37,9 +37,7 @@ logger = logging.getLogger(__name__)
 URL = "https://data.caf.fr/api/explore/v2.1/catalog/datasets/txcouv_pe_epci_dev/records?limit=20&refine=annee%3A%222023%22"
 DEFAULT_INDICATOR_ID = "i130"
 DEFAULT_YEAR = 2023  # Année fictive car indicateur cumulatif
-DEFAULT_SOURCE = (
-    "data.caf.fr"
-)
+DEFAULT_SOURCE = "data.caf.fr"
 
 
 @dataclass

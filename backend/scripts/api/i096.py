@@ -35,9 +35,7 @@ logger = logging.getLogger(__name__)
 URL = "https://www.ouestmedialab.fr/observatoire/cartographie-des-medias-locaux-en-france/"
 DEFAULT_INDICATOR_ID = "i096"
 DEFAULT_YEAR = 2024  # Année fictive car indicateur cumulatif
-DEFAULT_SOURCE = (
-    "i096.txt"
-)
+DEFAULT_SOURCE = "i096.txt"
 
 
 @dataclass
@@ -57,6 +55,7 @@ def get_raw_dir() -> Path:
     raw_dir = base_dir / "source"
     raw_dir.mkdir(parents=True, exist_ok=True)
     return raw_dir
+
 
 def extraire_donnees_media():
     raw_dir = get_raw_dir()
@@ -86,18 +85,20 @@ def extraire_donnees_media():
     df = pd.DataFrame(data, columns=["Nom_media", "Ville"])
     return df
 
+
 def fetch_medias_dependant() -> pd.DataFrame:
     """Télécharge le fichier des médias dépendants."""
     url_media_non_independants = "https://raw.githubusercontent.com/mdiplo/Medias_francais/refs/heads/master/medias.tsv"
-    return pd.read_csv(url_media_non_independants, sep="\t", skiprows=2) , 
+    return (pd.read_csv(url_media_non_independants, sep="\t", skiprows=2),)
 
 
-def clean_and_prepare_df(df_medias :pd.DataFrame, df_medias_non_independants: pd.DataFrame) -> pd.DataFrame:
+def clean_and_prepare_df(
+    df_medias: pd.DataFrame, df_medias_non_independants: pd.DataFrame
+) -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
     raw_dir = get_raw_dir()
 
-    
     # Création du dataframe des communes (cf functions.py)
     df_com = create_dataframe_communes(raw_dir)
 
@@ -194,7 +195,7 @@ def clean_and_prepare_df(df_medias :pd.DataFrame, df_medias_non_independants: pd
     # Application du filtre en une seule ligne et suppression des doublons
     df_temp = df_result[df_result.apply(filter_logic, axis=1)].copy().drop_duplicates
 
-    #On retire de df_temp les medias non indépendants
+    # On retire de df_temp les medias non indépendants
     df_final = df_temp[~df_temp["nom_media"].isin(df_medias_non_independants["Nom"])]
 
     query = """ 
@@ -287,9 +288,7 @@ def run(indicator_id: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Import des données des médias-> i096"
-    )
+    parser = argparse.ArgumentParser(description="Import des données des médias-> i096")
     parser.add_argument(
         "--indicator",
         default=DEFAULT_INDICATOR_ID,

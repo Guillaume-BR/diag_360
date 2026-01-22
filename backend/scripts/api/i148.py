@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 URL = "https://cartosante.atlasante.fr/#c=indicator&f=7&i=prox_struct.dist_str&s=2024&t=A01&view=map12"
 DEFAULT_INDICATOR_ID = "i148"
-DEFAULT_YEAR = 2024  
+DEFAULT_YEAR = 2024
 DEFAULT_SOURCE = "i148.csv"
 
 
@@ -87,7 +87,7 @@ def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
         "Distance à la structure la plus proche 2024": "dist_urgence_min",
     }
 
-    df=df.rename(columns=mapping)
+    df = df.rename(columns=mapping)
 
     # Jointure des données distance moyenne aux urgences
     query = """

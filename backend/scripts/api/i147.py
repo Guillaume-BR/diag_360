@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 URL = "https://cartosante.atlasante.fr/#c=indicator&f=7&i=prox_struct.dist_str&s=2024&t=A01&view=map12"
 DEFAULT_INDICATOR_ID = "i147"
-DEFAULT_YEAR = 2024 
+DEFAULT_YEAR = 2024
 DEFAULT_SOURCE = "i147.csv"
 
 

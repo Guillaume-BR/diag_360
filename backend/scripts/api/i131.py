@@ -36,10 +36,8 @@ logger = logging.getLogger(__name__)
 # Configuration
 URL = "https://www.data.gouv.fr/api/1/datasets/r/c2334d19-c752-413f-b64b-38006d9d0513"
 DEFAULT_INDICATOR_ID = "i131"
-DEFAULT_YEAR = 2025  
-DEFAULT_SOURCE = (
-    "data.gouv.fr"
-)
+DEFAULT_YEAR = 2025
+DEFAULT_SOURCE = "data.gouv.fr"
 
 
 @dataclass
@@ -59,6 +57,7 @@ def get_raw_dir() -> Path:
     raw_dir = base_dir / "source"
     raw_dir.mkdir(parents=True, exist_ok=True)
     return raw_dir
+
 
 def create_full(path_folder):
     """
@@ -99,12 +98,15 @@ def create_full(path_folder):
     print(f"Dataframe complet créé.")
     return df_full
 
+
 def fetch_api_payload() -> pd.DataFrame:
     """Charge le fichier des associations et retourne le DataFrame"""
 
     raw_dir = get_raw_dir()
 
-    zip_url = "https://www.data.gouv.fr/api/1/datasets/r/c2334d19-c752-413f-b64b-38006d9d0513"
+    zip_url = (
+        "https://www.data.gouv.fr/api/1/datasets/r/c2334d19-c752-413f-b64b-38006d9d0513"
+    )
     filename_asso = "data_asso.zip"
 
     # Download and extract the zip file
@@ -178,7 +180,7 @@ def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
             e2.siren,
             e2.total_pop_tot
         """
-    
+
     df_asso_epci = duckdb.sql(query).df().dropna()
 
     query_bdd = """ 
