@@ -30,7 +30,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import create_dataframe_epci, get_raw_dir
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +52,6 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def load_zone_urb() -> pd.DataFrame:
     """Charge le fichier des zones urbanisées et retourne le DataFrame"""
 
@@ -76,16 +68,12 @@ def load_zone_urb() -> pd.DataFrame:
 
 
 def load_amenagement_cyclable() -> pd.DataFrame:
-    """Charge le fichier des lieux de covoiturage et retourne le DataFrame"""
-
-    raw_dir = get_raw_dir()
-
-    # Chargement des données des aménagements cyclables
+    """Charge le fichier des lieux d'aménagement cyclables et retourne le DataFrame"""
     url = (
         "https://www.data.gouv.fr/api/1/datasets/r/f5d6ae97-b62e-46a7-ad5e-736c8084cee8"
     )
-    download_file(url, extract_to=raw_dir, filename="amenagement_cyclable.parquet")
-    return pd.read_parquet(str(raw_dir / "amenagement_cyclable.parquet"))
+    df = pd.read_parquet(url)
+    return df
 
 
 def clean_and_prepare_df(
@@ -93,10 +81,8 @@ def clean_and_prepare_df(
 ) -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
-    raw_dir = get_raw_dir()
-
     # Téléchargement des données epci pour jointure
-    df_epci = create_dataframe_epci(raw_dir)
+    df_epci = create_dataframe_epci()
 
     # Traitement des données des zones urbaines
     df_zone_urb.drop("Unnamed: 6", axis=1, inplace=True)

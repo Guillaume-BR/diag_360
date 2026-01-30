@@ -28,7 +28,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import get_raw_dir, create_dataframe_epci
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +49,6 @@ class RawValue:
     source: str | None = None
     meta: dict | None = None
 
-
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def fetch_api_payload() -> pd.DataFrame:
     """Charge le fichier des nombres de covoiturage et retourne le DataFrame"""
 
@@ -76,10 +67,8 @@ def fetch_api_payload() -> pd.DataFrame:
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
-    raw_dir = get_raw_dir()
-
     # Téléchargement des données epci pour jointure
-    df_epci = create_dataframe_epci(raw_dir)
+    df_epci = create_dataframe_epci()
 
     # Calcul par epci du nombre de trajets de covoiturage pour 10 000 habitants
     query_bdd = """

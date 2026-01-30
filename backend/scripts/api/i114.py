@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 from typing import Iterable, Iterator  # ✅ Correction
+from io import BytesIO
 
 import pandas as pd
 import duckdb
@@ -48,35 +49,23 @@ class RawValue:
     source: str | None = None
     meta: dict | None = None
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
 def dl_data_phyto() -> pd.DataFrame:
-    """Charge le fichier des lieux de covoiturage et retourne le DataFrame"""
-
-    raw_dir = get_raw_dir()
+    """Charge le fichier des données d'utilisation de phytosanitaires et retourne le DataFrame"""
 
     # Téléchargement de la table phyto
-    download_file(URL, extract_to=raw_dir, filename="achat_commune_phyto.parquet")
-    df_phyto = duckdb.read_parquet(str(raw_dir / "achat_commune_phyto.parquet"))
-
-    logger.info("Téléchargement des données du taux de couverture accueil jeune enfant")
+    df_phyto = duckdb.read_parquet(URL)
+    logger.info("Téléchargement des données d'utilisation de phytosanitaires")
     return df_phyto
 
 
-def dl_data_sau() -> pd.Dataframe:
-
-    raw_dir = get_raw_dir()
+def dl_data_sau() -> pd.DataFrame:
+    """Charge le fichier des surfaces agricoles utiles et retourne le DataFrame"""
     # Téléchagement de la table de la sau
     url = (
         "https://www.data.gouv.fr/api/1/datasets/r/022cb00f-38f2-4fe7-8895-e3467d3d9255"
     )
-    download_file(url, extract_to=raw_dir, filename="sau_2025.csv")
-    df_sau = pd.read_csv(raw_dir / "sau_2025.csv", sep=",")
+    content = download_file(url)
+    df_sau = pd.read_csv(BytesIO(content), sep=",")
     return df_sau
 
 

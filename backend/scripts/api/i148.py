@@ -28,7 +28,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import create_dataframe_communes, get_raw_dir
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +50,6 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def fetch_api_payload() -> pd.DataFrame:
     """Charge le fichier des urgences et retourne le DataFrame"""
 
@@ -76,9 +68,8 @@ def fetch_api_payload() -> pd.DataFrame:
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
-    raw_dir = get_raw_dir()
     # Création du dataframe des communes (cf functions.py)
-    df_com = create_dataframe_communes(raw_dir)
+    df_com = create_dataframe_communes()
 
     # Changement des noms de colonnes
     mapping = {

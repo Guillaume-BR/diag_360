@@ -27,7 +27,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import download_file, create_dataframe_epci, create_dataframe_communes, get_raw_dir
 
 logger = logging.getLogger(__name__)
 
@@ -50,55 +50,24 @@ class RawValue:
     source: str | None = None
     meta: dict | None = None
 
-
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def fetch_api_payload() -> tuple[pd.DataFrame, Path]:
     """Télécharge, extrait et retourne les données GASPAR + le chemin raw_dir."""
-    raw_dir = get_raw_dir
+    zip_content = download_file(URL)
+    with zipfile.ZipFile(BytesIO(zip_content)) as z:
+        with z.open("catnat_gaspar.csv") as f:
+            df_cat_nat = pd.read_csv(f, sep=";", low_memory=False)
 
-    zip_path = raw_dir / "gaspar.zip"
-    logger.info("Téléchargement des données GASPAR...")
-    download_file(URL, dl_to=raw_dir, filename="gaspar.zip")
-
-    # Extraction et nettoyage
-    logger.info("Extraction et nettoyage...")
-    with zipfile.ZipFile(zip_path, "r") as z:
-        extracted_files = z.namelist()
-        z.extractall(path=raw_dir)
-
-    # Supprimer uniquement les fichiers extraits du ZIP (sauf catnat*.csv)
-    for file in extracted_files:
-        if not file.startswith("catnat"):
-            file_path = raw_dir / file
-            if file_path.exists() and file_path.is_file():
-                file_path.unlink(missing_ok=True)
-                logger.debug(f"Suppression de {file}")
-
-    # Lire le CSV
-    path_file = raw_dir / "catnat_gaspar.csv"
-    if not path_file.exists():
-        raise FileNotFoundError(f"Fichier {path_file} introuvable après extraction")
-
-    return pd.read_csv(path_file, sep=";", low_memory=False)
+    return df_cat_nat
 
 
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     """Prépare le DataFrame brut pour le traitement."""
 
-    raw_dir = get_raw_dir()
-
     # Chargement de la table epci
-    df_epci = create_dataframe_epci(raw_dir)
+    df_epci = create_dataframe_epci()
 
     # Chargement de la table des communes
-    df_com = create_dataframe_communes(raw_dir)
+    df_com = create_dataframe_communes()
 
     query = """
     WITH cat_nat_counts AS (
@@ -220,7 +189,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.dry_run:
-        df = fetch_raw_csv()
+        df = fetch_api_payload()
         df_processed = clean_and_prepare_df(df)
         rows = list(transform_payload(df_processed))
         print(

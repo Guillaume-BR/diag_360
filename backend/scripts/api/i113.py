@@ -2,7 +2,7 @@
 """
 Indicateur i113 : Part de la Surface Agricole Utile sur la superficie totale du territoire
 Source : data.gouv.fr
-URL : https://www.data.gouv.fr/api/1/datasets/r/dbdd3481-107b-4eed-b66a-7f9dda1c7b78
+URL : https://www.data.gouv.fr/api/1/datasets/r/022cb00f-38f2-4fe7-8895-e3467d3d9255
 
 """
 from __future__ import annotations
@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 from typing import Iterable, Iterator  # ✅ Correction
+from io import BytesIO
 
 import pandas as pd
 import duckdb
@@ -28,12 +29,12 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import download_file, create_dataframe_epci, create_dataframe_communes
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-URL = "https://www.data.gouv.fr/api/1/datasets/r/dbdd3481-107b-4eed-b66a-7f9dda1c7b78"
+URL = "https://www.data.gouv.fr/api/1/datasets/r/022cb00f-38f2-4fe7-8895-e3467d3d9255"
 DEFAULT_INDICATOR_ID = "i113"
 DEFAULT_YEAR = 2025
 DEFAULT_SOURCE = "data.gouv.fr"
@@ -50,38 +51,27 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def fetch_api_payload() -> pd.DataFrame:
     """Charge le fichier des données principales et retourne le DataFrame"""
-
-    raw_dir = get_raw_dir()
 
     # Téléchagement de la table de la sau
     url = (
         "https://www.data.gouv.fr/api/1/datasets/r/022cb00f-38f2-4fe7-8895-e3467d3d9255"
     )
-    download_file(url, extract_to=raw_dir, filename="sau_2025.csv")
-    path_file = raw_dir / "sau_2025.csv"
+    content = download_file(url)
     logger.info("Téléchargement des données des sau")
-    return pd.read_csv(path_file, sep=",")
+    df = pd.read_csv(BytesIO(content), sep=",")
+    return df
 
 
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
-    raw_dir = get_raw_dir()
     # Téléchargement des données epci pour jointure
-    df_epci = create_dataframe_epci(raw_dir)
+    df_epci = create_dataframe_epci()
 
     # Téléchargement de la table com
-    df_com = create_dataframe_communes(raw_dir)
+    df_com = create_dataframe_communes()
 
     # Traitement de la table sau
     df = df[df["date_mesure"].str.startswith("2020")]

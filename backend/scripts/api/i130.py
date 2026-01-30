@@ -29,7 +29,6 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
 
 logger = logging.getLogger(__name__)
 
@@ -51,18 +50,8 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def fetch_api_payload() -> pd.DataFrame:
-    """Charge le fichier des lieux de covoiturage et retourne le DataFrame"""
-
-    raw_dir = get_raw_dir()
+    """Charge les données du taux de couverture accueil jeune enfant"""
 
     # Chargement des donnée via l'API
     # Define URLs and file paths

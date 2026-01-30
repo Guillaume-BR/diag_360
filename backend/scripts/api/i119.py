@@ -28,12 +28,11 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import get_raw_dir, create_dataframe_communes
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-URL = "https://www.data.gouv.fr/api/1/datasets/r/d6fb9e18-b66b-499c-8284-46a3595579cc"
 DEFAULT_INDICATOR_ID = "i119"
 DEFAULT_YEAR = 2019
 DEFAULT_SOURCE = "data.gouv.fr - fichier gaspar"
@@ -49,18 +48,9 @@ class RawValue:
     source: str | None = None
     meta: dict | None = None
 
-
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def fetch_api_payload() -> tuple[pd.DataFrame, Path]:
     """Charge et nettoie les données de risques majeurs"""
-    raw_dir = get_raw_dir
+    raw_dir = get_raw_dir() 
 
     # Lire le CSV
     path_file = raw_dir / "i119.csv"
@@ -100,10 +90,8 @@ def fetch_api_payload() -> tuple[pd.DataFrame, Path]:
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     """Prépare le DataFrame brut pour le traitement."""
 
-    raw_dir = get_raw_dir()
-
     # Chargement de la table des communes
-    df_com = create_dataframe_communes(raw_dir)
+    df_com = create_dataframe_communes()
 
     #jointure avec les communes pour obtenir les codes epci
     query = """ 

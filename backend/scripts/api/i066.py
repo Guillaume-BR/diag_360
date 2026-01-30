@@ -19,6 +19,7 @@ from typing import Iterable, Iterator  # ✅ Correction
 import pandas as pd
 import duckdb
 from sqlalchemy import select
+from io import BytesIO
 
 # Remonte de 3 niveaux : api/ -> scripts/ -> backend/
 backend_path = Path(__file__).resolve().parent.parent.parent
@@ -29,7 +30,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import download_file, create_dataframe_epci, create_dataframe_communes
 
 logger = logging.getLogger(__name__)
 
@@ -53,35 +54,22 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def fetch_raw_csv() -> pd.DataFrame:
     """Télécharge le fichier des pharmacies et retourne le DataFrame"""
-    raw_dir = get_raw_dir()
+    
     logger.info("Téléchargement des données de pharmacies")
-    download_file(URL, dl_to=raw_dir, filename="pharmacies.csv")
+    content = download_file(URL)
 
-    # Lire le CSV
-    path_file = raw_dir / "pharmacies.csv"
-    if not path_file.exists():
-        raise FileNotFoundError(f"Fichier {path_file} introuvable après téléchargement")
-
-    return pd.read_csv(path_file, sep=";", low_memory=False)
+    df = pd.read_csv(BytesIO(content), sep=";", low_memory=False)
+    return df
 
 
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-    raw_dir = get_raw_dir()
     # Chargement de la table epci
-    df_epci = create_dataframe_epci(raw_dir)
+    df_epci = create_dataframe_epci()
 
     # Chargement de la table des communes
-    df_com = create_dataframe_communes(raw_dir)
+    df_com = create_dataframe_communes()
 
     # Traitement des données de pharmacies
     df = df.iloc[:, [15, 19]]

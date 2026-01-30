@@ -111,7 +111,7 @@ def ensure_indicator_exists(session, indicator_id: str) -> None:
 def run(csv_filename: str) -> None:
     session = SessionLocal()
     try:
-        ensure_indicator_exists(session, "i032")  # adapter avec l'indicateur_id
+        ensure_indicator_exists(session, "i164")  # adapter avec l'indicateur_id
         df = fetch_raw_csv(csv_filename)
         df = clean_and_prepare_df(df)
         rows = list(transform_df_to_raw_values(df))
@@ -126,11 +126,11 @@ def run(csv_filename: str) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Import CSV -> valeur_indicateur (indicateur i032)"
+        description="Import CSV -> valeur_indicateur (indicateur i164)"
     )  # "Import CSV -> valeur_indicateur"
     parser.add_argument(
         "--csv",
-        default="i032.csv",
+        default="i164.csv",
         help="Nom du fichier CSV à importer (dans scripts/source/)",
     )  # adapter le default
     parser.add_argument(

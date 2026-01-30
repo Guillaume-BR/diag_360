@@ -17,6 +17,7 @@ from typing import Iterable, Iterator  # ✅ Correction
 import pandas as pd
 import duckdb
 from sqlalchemy import select
+import re
 
 # Remonte de 3 niveaux : api/ -> scripts/ -> backend/
 backend_path = Path(__file__).resolve().parent.parent.parent
@@ -27,7 +28,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import get_raw_dir, create_dataframe_communes, create_dataframe_epci
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +48,6 @@ class RawValue:
     unit: str | None = None
     source: str | None = None
     meta: dict | None = None
-
-
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
 
 
 def extraire_donnees_media():
@@ -89,7 +82,7 @@ def extraire_donnees_media():
 def fetch_medias_dependant() -> pd.DataFrame:
     """Télécharge le fichier des médias dépendants."""
     url_media_non_independants = "https://raw.githubusercontent.com/mdiplo/Medias_francais/refs/heads/master/medias.tsv"
-    return (pd.read_csv(url_media_non_independants, sep="\t", skiprows=2),)
+    return pd.read_csv(url_media_non_independants, sep="\t", skiprows=2)
 
 
 def clean_and_prepare_df(
@@ -97,10 +90,21 @@ def clean_and_prepare_df(
 ) -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
-    raw_dir = get_raw_dir()
-
     # Création du dataframe des communes (cf functions.py)
-    df_com = create_dataframe_communes(raw_dir)
+    df_com = create_dataframe_communes()
+
+    #Création du dataframe des epci
+    df_epci = create_dataframe_epci()
+
+    #On filtre df_epci
+    query = """
+    SELECT
+        DISTINCT siren AS id_epci,
+        raison_sociale AS nom_epci,
+        dept
+    FROM df_epci
+    """
+    df_epci_clean = duckdb.sql(query)
 
     ville_mapping = {
         "Bourg Les Valence": "Bourg-lès-Valence",
@@ -134,7 +138,6 @@ def clean_and_prepare_df(
     FROM df_com  
     INNER JOIN df_medias
     ON df_com.nom_standard = df_medias.Ville
-    ORDER BY dep_code, epci_code
     """
 
     df_result = duckdb.sql(query).df()
@@ -198,14 +201,17 @@ def clean_and_prepare_df(
     # On retire de df_temp les medias non indépendants
     df_final = df_temp[~df_temp["nom_media"].isin(df_medias_non_independants["Nom"])]
 
+
     query = """ 
     SELECT
-        epci_code as id_epci,
+        df_epci_clean.id_epci as id_epci,
         'i096' AS id_indicator,
         count(nom_media) AS valeur_brute,
         '2024' AS annee
-    FROM df_final
-    GROUP BY epci_code
+    FROM df_epci_clean
+    LEFT JOIN df_final
+        ON df_epci_clean.id_epci = df_final.epci_code
+    GROUP BY df_epci_clean.id_epci
     """
 
     return duckdb.sql(query).df()
