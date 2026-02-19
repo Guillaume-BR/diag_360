@@ -28,14 +28,14 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import get_raw_dir
 
 logger = logging.getLogger(__name__)
 
 # Configuration
 URL = "https://cartosante.atlasante.fr/#c=indicator&f=7&i=prox_struct.dist_str&s=2024&t=A01&view=map12"
 DEFAULT_INDICATOR_ID = "i147"
-DEFAULT_YEAR = 2024 
+DEFAULT_YEAR = 2024
 DEFAULT_SOURCE = "i147.csv"
 
 
@@ -50,16 +50,8 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
-def fetch_api_payload() -> pd.DataFrame:
-    """Télécharge le fichier des pharmacies et retourne le DataFrame + le chemin raw_dir."""
+def traitement_pharma() -> pd.DataFrame:
+    """Télécharge le fichier des pharmacies et retourne le DataFrame"""
 
     raw_dir = get_raw_dir()
     logger.info("Téléchargement des données de pharmacies")
@@ -71,15 +63,7 @@ def fetch_api_payload() -> pd.DataFrame:
             f"Fichier {path_file} introuvable dans le dossier {raw_dir}"
         )
 
-    return pd.read_csv(path_file, skiprows=2)
-
-
-def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcule l'indicateur via DuckDB à partir des données."""
-
-    raw_dir = get_raw_dir()
-    # Création du dataframe des communes (cf functions.py)
-    df_com = create_dataframe_communes(raw_dir)
+    df_dist_pharma = pd.read_csv(path_file, skiprows=2, sep=";")
 
     # Changement des noms de colonnes
     mapping_pharma = {
@@ -88,22 +72,61 @@ def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
         "Distance à la pharmacie la plus proche 2024": "dist_pharma_min",
     }
 
-    df = df.rename(columns=mapping_pharma)
+    df_dist_pharma = df_dist_pharma.rename(columns=mapping_pharma)
 
-    # Jointure des données distance moyenne aux pharmacies
-    query = """
+    # On modifie le code_insee de Paris, Marseille et Lyon
+    df_dist_pharma.loc[
+        df_dist_pharma["code_insee"].str.startswith("75"), "code_insee"
+    ] = "75056"
+    df_dist_pharma.loc[
+        df_dist_pharma["code_insee"].str.startswith("693"), "code_insee"
+    ] = "69123"
+    df_dist_pharma.loc[
+        df_dist_pharma["code_insee"].str.startswith("132"), "code_insee"
+    ] = "13055"
+
+    # on remplace les lignes où dist_pharma_min est "'N/A - résultat non disponible' par un vrai NA"
+    df_dist_pharma.loc[
+        df_dist_pharma["dist_pharma_min"].str.contains("N/A", na=False),
+        "dist_pharma_min",
+    ] = np.nan
+
+    # on groupe par code_insee en faisant la moyenne des distances
+    df_dist_pharma["dist_pharma_min"] = (
+        df_dist_pharma["dist_pharma_min"].str.replace(",", ".").astype(float)
+    )
+    df_dist_pharma = df_dist_pharma.groupby("code_insee", as_index=False).agg(
+        {"dist_pharma_min": "mean"}
+    )
+
+    return df_dist_pharma
+
+
+def clean_and_prepare_df() -> pd.DataFrame:
+    """Calcule l'indicateur via DuckDB à partir des données."""
+
+    raw_dir = get_raw_dir()
+    # Chargement des données de distance aux pharmacies
+    df_dist_pharma = traitement_pharma()
+
+    # Création du dataframe des communes (cf functions.py)
+    df_epci = pd.read_csv(raw_dir / "epci_membres.csv", sep=",")
+
+    # Jointure des données distance moyenne aux pharmacies par epci
+    query = """ 
     SELECT
-        DISTINCT epci_code as id_epci,
+        df_epci.dept_epci AS dept_id,
+        df_epci.siren AS id_epci,
+        df_epci.epci_nom as epci_lib,
         'i147' AS id_indicator,
         ROUND(AVG(TRY_CAST(dist_pharma_min AS DOUBLE)),2) AS valeur_brute,
         '2024' AS annee
-    FROM df_com
-    LEFT JOIN df
-    ON df_com.code_insee = df.code_insee
-    WHERE epci_code != 'ZZZZZZZZZ'
-    GROUP BY epci_code
+    FROM df_epci
+    LEFT JOIN df_dist_pharma
+    ON df_epci.code_insee = df_dist_pharma.code_insee
+    GROUP BY siren, epci_nom, dept_id
+    ORDER BY dept_id, id_epci
     """
-
     return duckdb.sql(query).df()
 
 
@@ -165,8 +188,7 @@ def run(indicator_id: str) -> None:
         ensure_indicator_exists(session, indicator_id)
 
         # Téléchargement et extraction
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_processed = clean_and_prepare_df()
 
         # Transformation
         rows = list(transform_payload(df_processed))
@@ -203,8 +225,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.dry_run:
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_processed = clean_and_prepare_df()
         rows = list(transform_payload(df_processed))
         print(
             json.dumps(

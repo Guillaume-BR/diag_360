@@ -16,8 +16,6 @@ import sys
 from typing import Iterable, Iterator  # ✅ Correction
 
 import pandas as pd
-import geopandas as gpd
-from shapely import wkb
 import duckdb
 from sqlalchemy import select
 
@@ -30,14 +28,14 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import get_raw_dir
 
 logger = logging.getLogger(__name__)
 
 # Configuration
 URL = "https://www.data.gouv.fr/api/1/datasets/r/f5d6ae97-b62e-46a7-ad5e-736c8084cee8"
 DEFAULT_INDICATOR_ID = "i058"
-DEFAULT_YEAR = 2025  
+DEFAULT_YEAR = 2025
 DEFAULT_SOURCE = "i058.csv"
 
 
@@ -52,52 +50,16 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-def load_zone_urb() -> pd.DataFrame:
-    """Charge le fichier des zones urbanisées et retourne le DataFrame"""
-
+def prepare_zone_urb():
+    # Chargement local des données mais sinon utiliser :
+    # https://docs.google.com/spreadsheets/d/1y6yy7_XCmhSUIqBmzZ200mgMo93YuZS8/edit?usp=sharing&ouid=108793438427721456504&rtpof=true&sd=true
     raw_dir = get_raw_dir()
-
-
-    # Lire le CSV
-    path_file = raw_dir / DEFAULT_SOURCE
-    if not path_file.exists():
-        raise FileNotFoundError(
-            f"Fichier {path_file} introuvable dans le dossier {raw_dir}"
-        )
-    logger.info("Téléchargement des données des zones urbanisées")
-    return pd.read_csv(path_file, sep = ",")
-
-def load_amenagement_cyclable() -> pd.DataFrame:
-    """Charge le fichier des lieux de covoiturage et retourne le DataFrame"""
-
-    raw_dir = get_raw_dir()
-
-    # Chargement des données des aménagements cyclables
-    url = (
-        "https://www.data.gouv.fr/api/1/datasets/r/f5d6ae97-b62e-46a7-ad5e-736c8084cee8"
-    )
-    download_file(url, extract_to=raw_dir, filename="amenagement_cyclable.parquet")
-    return pd.read_parquet(str(raw_dir / "amenagement_cyclable.parquet"))
-
-
-def clean_and_prepare_df(df_zone_urb: pd.DataFrame, df_amenagement_cyclable: pd.DataFrame) -> pd.DataFrame:
-    """Calcule l'indicateur via DuckDB à partir des données."""
-
-    raw_dir = get_raw_dir()
-
-    # Téléchargement des données epci pour jointure
-    df_epci = create_dataframe_epci(raw_dir)
+    path_zones_urb = raw_dir / "i058.csv"
+    df_zones_urb = pd.read_csv(path_zones_urb, sep=",")
 
     # Traitement des données des zones urbaines
-    df_zone_urb.drop("Unnamed: 6", axis=1, inplace=True)
-    df_zone_urb.drop(
+    df_zones_urb.drop("Unnamed: 6", axis=1, inplace=True)
+    df_zones_urb.drop(
         "* Les donnes proviennent de Corine Land Cover millésime 2018",
         axis=1,
         inplace=True,
@@ -111,95 +73,79 @@ def clean_and_prepare_df(df_zone_urb: pd.DataFrame, df_amenagement_cyclable: pd.
         "Part de la superficie artificialisée": "part_percent_superficie_artificialisee",
     }
 
-    df_zone_urb.rename(columns=mapping, inplace=True)
-    df_zone_urb["superficie_epci"] = (
-        df_zone_urb["superficie_epci"].replace(",", ".", regex=True).astype(float)
+    df_zones_urb.rename(columns=mapping, inplace=True)
+    df_zones_urb["superficie_epci"] = (
+        df_zones_urb["superficie_epci"].replace(",", ".", regex=True).astype(float)
     )
-    df_zone_urb["superficie_artificialisee"] = (
-        df_zone_urb["superficie_artificialisee"]
+    df_zones_urb["superficie_artificialisee"] = (
+        df_zones_urb["superficie_artificialisee"]
         .replace(",", ".", regex=True)
         .astype(float)
     )
-    df_zone_urb["part_percent_superficie_artificialisee"] = (
-        df_zone_urb["part_percent_superficie_artificialisee"]
+    df_zones_urb["part_percent_superficie_artificialisee"] = (
+        df_zones_urb["part_percent_superficie_artificialisee"]
         .replace(",", ".", regex=True)
         .replace(" %", "", regex=True)
         .astype(float)
     )
 
-    #traitement des données des aménagements cyclables
-    # 1. Charger l'extension sur l'instance par défaut de DuckDB
-    duckdb.sql("INSTALL spatial;")
-    duckdb.sql("LOAD spatial;")
+    return df_zones_urb
 
-    query = """
-        SELECT * EXCLUDE (geometry), 
-               ST_AsWKB(geometry) AS geometry 
-        FROM df_amenagement_cyclable
-        WHERE ST_GeometryType(geometry) IN ('LINESTRING', 'MULTILINESTRING')
-    """
 
-    df_amenagement_cyclable = duckdb.sql(query) 
-    print(f"df_amenagement_cyclable.shape: {df_amenagement_cyclable.df().shape}")
-    
-    df_pandas = df_amenagement_cyclable.df()
-    df_pandas['geometry'] = df_pandas['geometry'].apply(lambda x: wkb.loads(bytes(x)) if x else None)
+def load_amenagement_cyclable() -> pd.DataFrame:
+    """Charge le fichier des lieux de covoiturage et retourne le DataFrame"""
+    url = (
+        "https://www.data.gouv.fr/api/1/datasets/r/b464775c-8d01-4faf-a46e-342d50369cca"
+    )
+    df_amenagement_cyclable = pd.read_csv(url)
+    return df_amenagement_cyclable
 
-    # 2. On crée le GeoDataFrame directement à partir du DF existant
-    gdf = gpd.GeoDataFrame(df_pandas, geometry='geometry', crs="EPSG:4326")
 
-    # 3. Calcul des kilomètres
-    # On projette vers le système métrique (EPSG:2154 pour la France)
-    # .length donne des mètres, on divise par 1000 pour les km
-    gdf['distance_km'] = gdf.to_crs(epsg=2154).geometry.length / 1000
+def clean_and_prepare_df(
+    df_zones_urb: pd.DataFrame, df_amenagement_cyclable: pd.DataFrame
+) -> pd.DataFrame:
+    """Calcule l'indicateur via DuckDB à partir des données."""
 
-    df_temp_pandas = pd.DataFrame(gdf.drop(columns='geometry'))
+    raw_dir = get_raw_dir()
 
-    # Jointure des données des zones urbanisées avec les EPCI
-    query = """
-    SELECT
-        DISTINCT epci.siren,
-        zu.superficie_artificialisee,
-    FROM df_epci epci
-    LEFT JOIN df_zone_urb zu
-    ON zu.siren = epci.siren
-    """
+    # Téléchargement des données epci pour jointure
+    df_epci = pd.read_csv(raw_dir / "epci_membres.csv", sep=",")
 
-    df_zone_urbanise_merged = duckdb.sql(query)
-
-    # Amenagement cyclable par epci
-    query = """
-    WITH df_temp AS(
+    # km_amenagement par epci
+    query = """ 
     SELECT 
-        code_com_d AS code_insee,
-        sum(distance_km) AS km_amenagements
-    FROM df_temp_pandas
-    GROUP BY code_com_d)
-    
-    SELECT  
-        df_com.epci_code,
-        sum(df_temp.km_amenagements) AS km_amenagements
-    FROM df_com
-    LEFT JOIN df_temp
-    ON df_com.code_insee = df_temp.code_insee 
-    WHERE df_com.epci_code != 'ZZZZZZZZZ'
-    GROUP BY df_com.epci_code
+        df_epci.dept_epci,
+        df_epci.siren,
+        df_epci.epci_nom,
+        ROUND(sum(numerateur), 0) AS km_amenagement_cyclable
+    FROM df_epci
+    LEFT JOIN df_amenagement_cyclable
+    ON df_amenagement_cyclable.geocode_commune = df_epci.code_insee
+    GROUP BY df_epci.siren, df_epci.epci_nom, df_epci.dept_epci
+    ORDER BY df_epci.dept_epci, df_epci.epci_nom
     """
-    df_amenagements_par_epci = duckdb.sql(query)
+
+    df_amenagement_epci = duckdb.sql(query)
 
     # On merge les aménagements cyclables avec les zones urbanisées
     query_bdd = """ 
     SELECT 
-        ape.epci_code AS id_epci,
+        ape.dept_epci AS dept_id,
+        ape.siren AS id_epci,
+        ape.epci_nom AS epci_lib,
         'i058' AS id_indicator,
-        ROUND(ape.km_amenagements / zu.superficie_artificialisee,2) AS valeur_brute,
+        ROUND(ape.km_amenagement_cyclable / zu.superficie_artificialisee,2) AS valeur_brute,
         '2025' AS annee
-    FROM df_amenagements_par_epci ape
-    LEFT JOIN df_zone_urbanise_merged zu
-    ON ape.epci_code = zu.siren
+    FROM df_amenagement_epci ape
+    LEFT JOIN df_zones_urb zu
+    ON ape.siren = zu.siren
+    ORDER BY ape.dept_epci, ape.siren
     """
 
-    return duckdb.sql(query_bdd).df()
+    # sauvegarde du dataframe final
+    df_final = duckdb.sql(query_bdd)
+
+    return df_final.df()
 
 
 def transform_payload(df: pd.DataFrame) -> Iterator[RawValue]:
@@ -260,7 +206,7 @@ def run(indicator_id: str) -> None:
         ensure_indicator_exists(session, indicator_id)
 
         # Téléchargement et extraction
-        df_zone_urb = load_zone_urb()
+        df_zone_urb = prepare_zone_urb()
         df_amenagement_cyclable = load_amenagement_cyclable()
         df_processed = clean_and_prepare_df(df_zone_urb, df_amenagement_cyclable)
 
@@ -299,9 +245,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.dry_run:
-        df_zone_urb = load_zone_urb()
+        df_zones_urb = prepare_zone_urb()
         df_amenagement_cyclable = load_amenagement_cyclable()
-        df_processed = clean_and_prepare_df(df_zone_urb, df_amenagement_cyclable)
+        df_processed = clean_and_prepare_df(df_zones_urb, df_amenagement_cyclable)
         rows = list(transform_payload(df_processed))
         print(
             json.dumps(

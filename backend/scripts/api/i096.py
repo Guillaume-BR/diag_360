@@ -27,7 +27,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import get_raw_dir, create_dataframe_communes
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +35,7 @@ logger = logging.getLogger(__name__)
 URL = "https://www.ouestmedialab.fr/observatoire/cartographie-des-medias-locaux-en-france/"
 DEFAULT_INDICATOR_ID = "i096"
 DEFAULT_YEAR = 2024  # Année fictive car indicateur cumulatif
-DEFAULT_SOURCE = (
-    "i096.txt"
-)
+DEFAULT_SOURCE = "i096.txt"
 
 
 @dataclass
@@ -50,13 +48,6 @@ class RawValue:
     source: str | None = None
     meta: dict | None = None
 
-
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
 
 def extraire_donnees_media():
     raw_dir = get_raw_dir()
@@ -83,23 +74,7 @@ def extraire_donnees_media():
             # Cas de secours si le format est différent
             data.append([item, "Inconnue"])
     # 3. Création du DataFrame
-    df = pd.DataFrame(data, columns=["Nom_media", "Ville"])
-    return df
-
-def fetch_medias_dependant() -> pd.DataFrame:
-    """Télécharge le fichier des médias dépendants."""
-    url_media_non_independants = "https://raw.githubusercontent.com/mdiplo/Medias_francais/refs/heads/master/medias.tsv"
-    return pd.read_csv(url_media_non_independants, sep="\t", skiprows=2) , 
-
-
-def clean_and_prepare_df(df_medias :pd.DataFrame, df_medias_non_independants: pd.DataFrame) -> pd.DataFrame:
-    """Calcule l'indicateur via DuckDB à partir des données."""
-
-    raw_dir = get_raw_dir()
-
-    
-    # Création du dataframe des communes (cf functions.py)
-    df_com = create_dataframe_communes(raw_dir)
+    df_medias = pd.DataFrame(data, columns=["Nom_media", "Ville"])
 
     ville_mapping = {
         "Bourg Les Valence": "Bourg-lès-Valence",
@@ -121,6 +96,9 @@ def clean_and_prepare_df(df_medias :pd.DataFrame, df_medias_non_independants: pd
 
     df_medias["Ville"] = df_medias["Ville"].replace(ville_mapping)
 
+    # Création du dataframe des communes (cf functions.py)
+    df_com = create_dataframe_communes()
+
     # premiere jointure avec les communes
     query = """
     SELECT 
@@ -136,7 +114,7 @@ def clean_and_prepare_df(df_medias :pd.DataFrame, df_medias_non_independants: pd
     ORDER BY dep_code, epci_code
     """
 
-    df_result = duckdb.sql(query).df()
+    df_medias_join = duckdb.sql(query).df()
 
     # On supprime les doublons
     # Configuration des règles de filtrage
@@ -192,9 +170,27 @@ def clean_and_prepare_df(df_medias :pd.DataFrame, df_medias_non_independants: pd
         return row["dep_code"] == regle
 
     # Application du filtre en une seule ligne et suppression des doublons
-    df_temp = df_result[df_result.apply(filter_logic, axis=1)].copy().drop_duplicates
+    df_result = (
+        df_medias_join[df_medias_join.apply(filter_logic, axis=1)]
+        .copy()
+        .drop_duplicates(subset=["code_insee", "nom_media"])
+    )
 
-    #On retire de df_temp les medias non indépendants
+    return df_result
+
+
+def fetch_medias_dependant() -> pd.DataFrame:
+    """Télécharge le fichier des médias dépendants."""
+    url_media_non_independants = "https://raw.githubusercontent.com/mdiplo/Medias_francais/refs/heads/master/medias.tsv"
+    return (pd.read_csv(url_media_non_independants, sep="\t", skiprows=2),)
+
+
+def clean_and_prepare_df(
+    df_medias: pd.DataFrame, df_medias_non_independants: pd.DataFrame
+) -> pd.DataFrame:
+    """Calcule l'indicateur via DuckDB à partir des données."""
+
+    # On retire de df_temp les medias non indépendants
     df_final = df_temp[~df_temp["nom_media"].isin(df_medias_non_independants["Nom"])]
 
     query = """ 
@@ -287,9 +283,7 @@ def run(indicator_id: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Import des données des médias-> i096"
-    )
+    parser = argparse.ArgumentParser(description="Import des données des médias-> i096")
     parser.add_argument(
         "--indicator",
         default=DEFAULT_INDICATOR_ID,

@@ -28,7 +28,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import get_raw_dir
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +50,6 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def fetch_api_payload() -> pd.DataFrame:
     """Charge le fichier des lieux de covoiturage et retourne le DataFrame"""
 
@@ -70,44 +62,43 @@ def fetch_api_payload() -> pd.DataFrame:
             f"Fichier {path_file} introuvable dans le dossier {raw_dir}"
         )
     logger.info("Téléchargement des données du nombre de lieux de covoiturage")
-    return pd.read_csv(path_file, sep = ",")
+    return pd.read_csv(path_file, sep=",")
 
 
-def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
+def clean_and_prepare_df() -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
     raw_dir = get_raw_dir()
-    # Téléchargement des données epci pour jointure
-    df_epci = create_dataframe_epci(raw_dir)
+    # Chargement du fichier des lieux de covoiturage
+    df_nb_lieu_covoit = duckdb.read_csv(raw_dir / DEFAULT_SOURCE)
+
+    # Chargement des données epci pour jointure
+    df_epci = pd.read_csv(raw_dir / "epci_membres.csv", sep=",")
 
     # Calcul par epci du nombre de lieux de covoiturage pour 10000 habitants
-    query_bdd = """
+    query = """
     WITH df_nb_lieu_covoit_filtered AS (
         SELECT 
             territoryid AS siren,
             sum(valeur) AS nb_aires_covoiturage
-        FROM df
+        FROM df_nb_lieu_covoit
         WHERE type_lieu = 'Aire de covoiturage'
         GROUP BY territoryid
-        ),
-
-        df_epci_filtered AS (
-        SELECT 
-            DISTINCT siren,
-            TRY_CAST(REPLACE(total_pop_tot,' ','') AS DOUBLE) AS total_pop_tot
-        FROM df_epci
-    )
-
+        )
+    
     SELECT 
+        e1.dept_epci AS dept_id,
         e1.siren AS id_epci,
+        e1.epci_nom AS epci_lib,
         'i149' AS id_indicator,
-        ROUND(e2.nb_aires_covoiturage / e1.total_pop_tot * 10000,3) AS valeur_brute,
+        ROUND(e2.nb_aires_covoiturage / e1.total_pop_mun * 10000,3) AS valeur_brute,
         '2025' AS annee
-    FROM df_epci_filtered e1
+    FROM df_epci e1
     LEFT JOIN df_nb_lieu_covoit_filtered e2
     ON e1.siren = e2.siren
+    GROUP BY e1.dept_epci, e1.siren, e1.epci_nom, e2.nb_aires_covoiturage,  e1.total_pop_mun
+    ORDER BY e1.dept_epci, e1.siren
     """
-
     return duckdb.sql(query_bdd).df()
 
 
@@ -169,8 +160,7 @@ def run(indicator_id: str) -> None:
         ensure_indicator_exists(session, indicator_id)
 
         # Téléchargement et extraction
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_processed = clean_and_prepare_df()
 
         # Transformation
         rows = list(transform_payload(df_processed))
@@ -207,8 +197,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.dry_run:
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_processed = clean_and_prepare_df()
         rows = list(transform_payload(df_processed))
         print(
             json.dumps(

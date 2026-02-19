@@ -1,42 +1,16 @@
 import requests
 import zipfile
-import os
 import pandas as pd
-import duckdb
 from pathlib import Path
+from io import BytesIO
 
 
-def download_file(url: str, extract_to: str = ".", filename: str = None) -> None:
-    """
-    Télécharge un fichier depuis une URL et l'enregistre localement.
-
-    Le fichier est téléchargé uniquement s'il n'existe pas déjà
-    dans le répertoire de destination.
-
-    Parameters
-    ----------
-    url : str
-        URL du fichier à télécharger.
-    extract_to : str, optional
-        Répertoire de destination du fichier (par défaut : répertoire courant).
-    filename : str
-        Nom du fichier local (avec extension).
-    """
-
-    if not os.path.exists(extract_to):
-        os.makedirs(extract_to, exist_ok=True)
-        print(f"Dossier créé : {extract_to}")
-
-    filename = os.path.join(extract_to, filename)
-
-    if not os.path.exists(filename):
-        response = requests.get(url)
+def download_file(url: str) -> bytes:
+    """Télécharge le fichier et retourne son contenu en mémoire"""
+    with requests.get(url, stream=True) as response:
         response.raise_for_status()
-        print(f"Téléchargement du fichier : {filename}")
-
-        with open(filename, "wb") as f:
-            f.write(response.content)
-        print(f"Fichier téléchargé avec succès : {filename}")
+        content = response.content
+    return content
 
 
 def extract_zip(zip_filename: str, extract_to: str = ".") -> None:
@@ -62,36 +36,6 @@ def extract_zip(zip_filename: str, extract_to: str = ".") -> None:
     with zipfile.ZipFile(zip_filename, "r") as z:
         z.extractall(extract_to)
     print(f"Extraction terminée dans le dossier : {extract_to}")
-
-
-def load_csv_to_duckdb(file_path, table_name, con):
-    """
-    Charge un fichier CSV dans DuckDB sous forme de table.
-
-    Le fichier CSV est lu automatiquement par DuckDB à l'aide de
-    `read_csv_auto`, qui infère les types de colonnes.
-
-    Parameters
-    ----------
-    file_path : str
-        Chemin vers le fichier CSV à importer.
-    table_name : str
-        Nom de la table DuckDB à créer.
-    con : duckdb.DuckDBPyConnection
-        Connexion DuckDB active.
-
-    Notes
-    -----
-    - La table est créée à partir du contenu du CSV.
-    - Si une table du même nom existe déjà, une erreur sera levée.
-    """
-
-    con.execute(
-        f"""
-        CREATE OR REPLACE TABLE {table_name} AS 
-        SELECT * FROM read_csv_auto('{file_path}',header=True,delim=',)
-        """
-    )
 
 
 def float_to_codepostal(df: pd.DataFrame, col: str) -> pd.DataFrame:
@@ -136,29 +80,22 @@ def homogene_nan(df):
     return df
 
 
-def create_dataframe_communes(dir_path):
+def create_dataframe_communes() -> pd.DataFrame:
+    """
+    Crée un DataFrame des communes à partir d'une source en ligne.
+    """
     com_url = (
         "https://www.data.gouv.fr/api/1/datasets/r/f5df602b-3800-44d7-b2df-fa40a0350325"
     )
-    download_file(com_url, extract_to=dir_path, filename="communes_france_2025.csv")
-    df_com = pd.read_csv(dir_path / "communes_france_2025.csv")
+    content = download_file(com_url)
+    df_com = pd.read_csv(BytesIO(content), sep=",", low_memory=False)
     df_com = float_to_codepostal(df_com, "code_postal")
     return df_com
 
 
-def create_dataframe_epci(extract_dir):
-    epci_url = (
-        "https://www.data.gouv.fr/api/1/datasets/r/6e05c448-62cc-4470-aa0f-4f31adea0bc4"
-    )
-    download_file(epci_url, extract_to=extract_dir, filename="data_epci.csv")
-    src = extract_dir / "data_epci.csv"
-    dst = extract_dir / "data_epci_utf8.csv"
-
-    with open(src, "r", encoding="latin1") as f:
-        content = f.read()
-
-    with open(dst, "w", encoding="utf-8") as f:
-        f.write(content)
-
-    df_epci = duckdb.read_csv(str(dst), header=True, sep=";")
-    return df_epci
+def get_raw_dir() -> Path:
+    """Retourne le chemin du répertoire source, le crée si nécessaire."""
+    base_dir = Path(__file__).resolve().parent.parent
+    raw_dir = base_dir / "source"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    return raw_dir

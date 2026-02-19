@@ -2,8 +2,11 @@
 """
 Indicateur i131 : Nombre d'associations pour 1000 habitants
 Source : data.gouv.fr
-URL : https://www.data.gouv.fr/api/1/datasets/r/c2334d19-c752-413f-b64b-38006d9d0513
-
+URL : https://www.data.gouv.fr/api/1/datasets/r/cc7b8f0c-45ea-4444-8b55-55d30bc34ac5
+Il faut aussi récupérer les données des assos de l'Alsace-Moselle (57,67,68) via ces 3 fichiers :
+"57": "https://www.data.gouv.fr/api/1/datasets/r/f5073265-9689-441c-bd6d-8d9fbd360161",
+        "67": "https://www.data.gouv.fr/api/1/datasets/r/b7acf7a2-1480-465e-b02b-22633d0a378d",
+        "68": "https://www.data.gouv.fr/api/1/datasets/r/b7d6b412-5da6-4ed2-97cc-c9d8e7b321de",
 """
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ import os
 from pathlib import Path
 import sys
 from typing import Iterable, Iterator  # ✅ Correction
+from io import BytesIO
 
 import pandas as pd
 import duckdb
@@ -29,17 +33,15 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import download_file, get_raw_dir, create_dataframe_communes
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-URL = "https://www.data.gouv.fr/api/1/datasets/r/c2334d19-c752-413f-b64b-38006d9d0513"
+URL = "https://www.data.gouv.fr/api/1/datasets/r/cc7b8f0c-45ea-4444-8b55-55d30bc34ac5"
 DEFAULT_INDICATOR_ID = "i131"
-DEFAULT_YEAR = 2025  
-DEFAULT_SOURCE = (
-    "data.gouv.fr"
-)
+DEFAULT_YEAR = 2025
+DEFAULT_SOURCE = "data.gouv.fr"
 
 
 @dataclass
@@ -53,145 +55,276 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-def create_full(path_folder):
+def asso_sans_alsace() -> pd.DataFrame:
     """
-    Lit tous les fichiers CSV d'un dossier, filtre certaines colonnes,
-    concatène les résultats et supprime chaque fichier après lecture.
-
-    Parameters
-    ----------
-    path_folder : str
-        Chemin vers le dossier contenant les fichiers CSV.
+    Charge les données des associations hors Alsace-Moselle.
 
     Returns
     -------
     pd.DataFrame
-        DataFrame complet avec les colonnes 'adrs_codeinsee' et 'adrs_codepostal'
-        pour les lignes où 'position' == 'A'.
+        DataFrame contenant les données des associations hors Alsace-Moselle nettoyées.
     """
-    df_full = pd.DataFrame()
-
-    for file_name in os.listdir(path_folder):
-        if file_name.endswith(".csv") and file_name.startswith("rna_waldec"):
-            file_path = os.path.join(path_folder, file_name)
-
-            # Lire le CSV
-            df_temp = pd.read_csv(file_path, sep=";")
-            print(f"Fichier lu : {file_path} avec {len(df_temp)} lignes.")
-            df_temp = df_temp.loc[
-                df_temp["position"] == "A"
-            ]  # filtre les association en activité
-            df_temp = df_temp[["adrs_codeinsee", "adrs_codepostal"]]
-
-            # Concaténer dans le DataFrame complet
-            df_full = pd.concat([df_full, df_temp], ignore_index=True, axis=0)
-
-            # Supprimer le fichier après lecture
-            os.remove(file_path)
-
-    print(f"Dataframe complet créé.")
-    return df_full
-
-def fetch_api_payload() -> pd.DataFrame:
-    """Charge le fichier des associations et retourne le DataFrame"""
-
+    # Définition du chemin du dossier source
     raw_dir = get_raw_dir()
 
-    zip_url = "https://www.data.gouv.fr/api/1/datasets/r/c2334d19-c752-413f-b64b-38006d9d0513"
-    filename_asso = "data_asso.zip"
+    # Chargement du dataframe des communes
+    df_com = create_dataframe_communes(raw_dir)
 
-    # Download and extract the zip file
-    download_file(zip_url, extract_to=raw_dir, filename=filename_asso)
-    with zipfile.ZipFile(str(raw_dir / filename_asso), "r") as z:
-        z.extractall(extract_to=raw_dir)
+    # Téléchargement du fichier parquet des associations
+    url = (
+        "https://www.data.gouv.fr/api/1/datasets/r/cc7b8f0c-45ea-4444-8b55-55d30bc34ac5"
+    )
+    df_asso = duckdb.read_parquet(url)
 
-    # Create full dataframe from extracted CSV files
-    df = create_full(path_folder=raw_dir)
-    logger.info("Téléchargement des données du nombre de lieux de covoiturage")
-    return df
+    # On garde les assos actives et on retire celles que l'on ne peut rattacher à une commune
+    query = """ 
+    SELECT 
+        id,
+        adrs_codeinsee, 
+        adrs_codepostal
+    FROM df_asso 
+    WHERE position = 'A' 
+            AND (adrs_codeinsee IS NOT NULL OR adrs_codepostal IS NOT NULL)
+            AND (adrs_codeinsee != '0' OR adrs_codepostal != '00000')
+            AND (adrs_codeinsee !='0' OR adrs_codepostal IS NOT NULL)
+    ORDER BY adrs_codeinsee
+    """
+
+    df_asso_filtered = duckdb.sql(query).df()
+
+    # Récupération des valeurs code_insee et code_postal manquantes via jointure avec df_com
+    query_insee_not_null = """
+    SELECT
+        *
+    FROM df_asso_filtered
+    WHERE adrs_codeinsee IS NOT NULL 
+        AND adrs_codeinsee!='0'
+    """
+
+    df_insee_not_null = duckdb.sql(query_insee_not_null).df()
+
+    query_insee_null = """
+    SELECT
+        *
+    FROM df_asso_filtered
+    WHERE adrs_codeinsee IS NULL 
+        OR adrs_codeinsee='0'
+    """
+    df_insee_null = duckdb.sql(query_insee_null).df()
+
+    for _, row in df_insee_null.iterrows():
+        code_postal = row["adrs_codepostal"]
+        code_insee = df_com[df_com["code_postal"] == code_postal]["code_insee"].values[
+            0
+        ]
+        print(f"Code postal: {code_postal} -> Code insee: {code_insee}")
+        row["adrs_codeinsee"] = code_insee
+
+    query = """ 
+    select * from df_insee_null
+    union
+    select * from df_insee_not_null
+    """
+
+    df_asso_als = duckdb.sql(query)
+
+    # On règle les problèmes de code postal
+    query_sans_pb_postal = """ 
+    SELECT * 
+    FROM df_asso_als 
+    WHERE adrs_codepostal not like '00%' 
+    ORDER BY adrs_codeinsee
+    """
+
+    df_sans_pb_postal = duckdb.sql(query_sans_pb_postal).df()
+
+    query_pb_postal = """ 
+    SELECT *
+    FROM df_asso_als
+    WHERE adrs_codepostal like '00%'
+    ORDER BY adrs_codeinsee
+    """
+
+    df_pb_postal = duckdb.sql(query_pb_postal)
+
+    ##Correction des codes postaux de Paris
+    query_paris_corrige = """ 
+    SELECT 
+        id, 
+        '75056' AS adrs_codeinsee,
+        adrs_codepostal
+    FROM df_pb_postal 
+    WHERE adrs_codeinsee LIKE '75%'
+    ORDER BY adrs_codeinsee
+    """
+
+    df_paris_corrige = duckdb.sql(query_paris_corrige).df()
+
+    ##On revient aux codes postaux problématiques en enlevant paris corrigé
+    query_pb_postal_sans_paris = """
+    SELECT * 
+    FROM df_pb_postal
+    WHERE adrs_codeinsee != '75112'
+    """
+    df_pb_postal_sans_paris = duckdb.sql(query_pb_postal_sans_paris).df()
+
+    # Correction des derniers codes postaux problématiques via jointure avec df_com
+    for _, row in df_pb_postal_sans_paris.iterrows():
+        code_insee = row["adrs_codeinsee"]
+        try:
+            code_postal = df_com[df_com["code_insee"] == code_insee][
+                "code_postal"
+            ].values[0]
+        except IndexError:
+            print(f"Code insee: {code_insee} not found in df_com")
+            continue
+
+    # On supprime les derniers problèmes
+    df_pb_postal_clean = df_pb_postal_sans_paris[
+        df_pb_postal_sans_paris["adrs_codepostal"] != "00000"
+    ]
+
+    # On concatène les dataframes pour obtenir le dataframe final
+    df_asso_sans_final = pd.concat(
+        [df_sans_pb_postal, df_pb_postal_clean, df_paris_corrige]
+    )
+
+    return df_asso_sans_final
+
+
+def asso_alsace_moselle() -> pd.DataFrame:
+    # Données des associations pour 57,67,68 (Alsace-Moselle)
+    dico_url = {
+        "57": "https://www.data.gouv.fr/api/1/datasets/r/f5073265-9689-441c-bd6d-8d9fbd360161",
+        "67": "https://www.data.gouv.fr/api/1/datasets/r/b7acf7a2-1480-465e-b02b-22633d0a378d",
+        "68": "https://www.data.gouv.fr/api/1/datasets/r/b7d6b412-5da6-4ed2-97cc-c9d8e7b321de",
+    }
+
+    df_asso = pd.DataFrame()
+    for _, url in dico_url.items():
+        df_dept = pd.read_csv(url, sep=";", dtype=str)
+        df_asso = pd.concat([df_asso, df_dept], ignore_index=True)
+
+    # Chargement de df_com
+    raw_dir = get_raw_dir()
+    df_com = create_dataframe_communes(raw_dir)
+
+    # On garde les assos inscrites
+    query = """ 
+    SELECT 
+        NUMERO_AMALIA as id,
+        COMMUNE as commune,
+        CODE_POSTAL as adrs_codepostal
+    FROM df_asso
+    WHERE ETAT_ASSOCIATION = 'INSCRITE'
+    ORDER BY CODE_POSTAL
+    """
+
+    df_asso_filtered = duckdb.sql(query).df()
+
+    # On règle les problèmes de code postal
+    mapping_code_postal = {
+        "57": "57050",
+        "5700": "57000",
+        "570000": "57000",
+        "573000": "57300",
+        "57657660": "57660",
+        "67000": "67000",
+        "670000": "67000",
+        "680000": "68000",
+        "681180 ": "68118",
+        "684809": "68480",
+        "686102": "68610",
+    }
+
+    df_asso_als = df_asso_filtered.replace({"adrs_codepostal": mapping_code_postal})
+
+    # jointure avec les communes pour récupérer les codes insee
+    query_join = """ 
+    SELECT 
+        a.id,
+        c.nom_standard_majuscule as commune,
+        a.adrs_codepostal,
+        c.code_insee as adrs_codeinsee  
+    FROM df_asso_als a
+    LEFT JOIN df_com c
+    ON a.commune = c.nom_standard_majuscule 
+        AND LEFT(a.adrs_codepostal, 2) = LEFT(c.code_postal, 2)
+    ORDER BY a.adrs_codepostal  
+    """
+
+    df_asso_joined = duckdb.sql(query_join)
+    return df_asso_joined.df()
+
+
+def traitement_asso() -> pd.DataFrame:
+    # Données des associations hors Alsace-Moselle
+    df_asso_sans_als = asso_sans_alsace().reset_index(drop=True)
+
+    # Données des associations pour 57,67,68 (Alsace-Moselle)
+    df_asso_als = asso_alsace_moselle().reset_index(drop=True)
+
+    # Concaténation des deux dataframes des assos
+    query_union = """
+    SELECT 
+        id,
+        adrs_codeinsee,
+        adrs_codepostal 
+    FROM df_joined
+
+    UNION
+
+    SELECT * 
+    FROM df_asso_sans_als
+    ORDER BY adrs_codeinsee
+    """
+
+    df_asso_complete = duckdb.sql(query_union).df()
+
+    # On retraite le code insee pour les communes de Paris, Marseille et Lyon
+    df_asso_complete.dropna(
+        subset=["adrs_codeinsee"], inplace=True
+    )  # Supprimer les lignes avec des valeurs nulles dans adrs_codeinsee
+    df_asso_complete["adrs_codeinsee"] = df_asso_complete["adrs_codeinsee"].apply(
+        lambda x: "75056" if x.startswith("75") and isinstance(x, str) else x
+    )
+    df_asso_complete["adrs_codeinsee"] = df_asso_complete["adrs_codeinsee"].apply(
+        lambda x: "13055" if x.startswith("132") and isinstance(x, str) else x
+    )
+    df_asso_complete["adrs_codeinsee"] = df_asso_complete["adrs_codeinsee"].apply(
+        lambda x: "69123" if x.startswith("693") and isinstance(x, str) else x
+    )
+    return df_asso_complete
 
 
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
     raw_dir = get_raw_dir()
+    df_epci = pd.read_csv(raw_dir / "epci_membres.csv", sep=",")
 
-    # Homogenize NaN values
-    df_asso_cleaned = homogene_nan(df).reset_index(drop=True)
+    # Chargement de df_asso_complete
+    df_asso_complete = traitement_asso()
 
-    # Correction des nan
-    df_nan = df_asso_cleaned.loc[
-        df_asso_cleaned[["adrs_codeinsee", "adrs_codepostal"]].isna().any(axis=1)
-    ]
-    df_sans_nan = df_asso_cleaned.dropna().reset_index(drop=True)
-    df_nan_postal = df_nan.loc[df_nan["adrs_codepostal"].isna()]
-
-    # Création de la table duckdb pour les jointures
-    df_com = create_dataframe_communes(raw_dir)
-
-    # Récupération des codes postaux manquants via jointure avec df_com
+    # Calcul de l'indicateur i131 : nombre d'associations pour 1000 habitants par EPCI
     query = """ 
-        SELECT 
-            DISTINCT e1.adrs_codeinsee, 
-            e2.code_insee, 
-            e2.code_postal
-        FROM df_nan_postal e1
-        LEFT JOIN df_com e2
-        ON (e1.adrs_codeinsee = e2.code_insee)
-        ORDER BY e1.adrs_codeinsee
-        """
-    df_sans_nan_postal = duckdb.sql(query).df().dropna()
-    df_sans_nan_postal = df_sans_nan_postal[["adrs_codeinsee", "code_postal"]]
-    df_sans_nan_postal.rename(columns={"code_postal": "adrs_codepostal"}, inplace=True)
+    SELECT 
+        p.dept_epci AS dept_id,
+        CAST(p.siren AS VARCHAR) AS id_epci,
+        p.epci_nom AS epci_lib,
+        'i131' AS id_indicator,
+        ROUND(COUNT(e2.adrs_codeinsee) / p.total_pop_mun * 1000,2) AS valeur_brute,
+        '2025' AS annee
+    FROM df_epci p
+    LEFT JOIN df_epci e1 ON e1.siren = p.siren
+    LEFT JOIN df_asso_complete e2 
+        ON e2.adrs_codeinsee = e1.code_insee
+    GROUP BY p.dept_epci, p.siren, p.epci_nom, p.total_pop_mun
+    ORDER BY dept_id, id_epci;
+    """
+    df_asso_final = duckdb.sql(query)
 
-    # Combinaison des deux dataframes pour obtenir le dataframe complet
-    df_asso_complete = (
-        pd.concat(
-            [df_sans_nan[["adrs_codeinsee", "adrs_codepostal"]], df_sans_nan_postal],
-            ignore_index=True,
-            axis=0,
-        )
-        .sort_values(["adrs_codeinsee", "adrs_codepostal"])
-        .dropna()
-        .reset_index(drop=True)
-    )
-
-    # Création de la table duckdb pour les jointures avec les epci
-    df_epci = create_dataframe_epci(raw_dir)
-
-    query = """
-        SELECT 
-            e2.siren,
-            REPLACE(e2.total_pop_tot, ' ', '') AS population,
-            COUNT(DISTINCT e1.id_asso) AS nb_asso
-        FROM df_epci e2
-        LEFT JOIN df_asso_complete e1
-            ON e1.adrs_codeinsee = e2.insee
-        GROUP BY 
-            e2.siren,
-            e2.total_pop_tot
-        """
-    
-    df_asso_epci = duckdb.sql(query).df().dropna()
-
-    query_bdd = """ 
-        SELECT 
-            siren as id_epci, 
-            'i131' AS id_indicator,
-            round(1.0*TRY_CAST(nb_asso AS DOUBLE) / TRY_CAST(population AS DOUBLE) * 1000,2) as valeur_brute,
-            '2025' AS annee
-        FROM df_asso_epci
-        ORDER BY siren
-        """
-
-    return duckdb.sql(query_bdd).df()
+    return df_asso_final.df()
 
 
 def transform_payload(df: pd.DataFrame) -> Iterator[RawValue]:
@@ -252,8 +385,8 @@ def run(indicator_id: str) -> None:
         ensure_indicator_exists(session, indicator_id)
 
         # Téléchargement et extraction
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_asso_complete = traitement_asso()
+        df_processed = clean_and_prepare_df(df_asso_complete)
 
         # Transformation
         rows = list(transform_payload(df_processed))
@@ -290,8 +423,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.dry_run:
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_asso_complete = traitement_asso()
+        df_processed = clean_and_prepare_df(df_asso_complete)
         rows = list(transform_payload(df_processed))
         print(
             json.dumps(

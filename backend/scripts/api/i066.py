@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 from typing import Iterable, Iterator  # ✅ Correction
+from io import BytesIO
 
 import pandas as pd
 import duckdb
@@ -29,14 +30,14 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import download_file, get_raw_dir
 
 logger = logging.getLogger(__name__)
 
 # Configuration
 URL = "https://www.data.gouv.fr/api/1/datasets/r/2ce43ade-8d2c-4d1d-81da-ca06c82abc68"
 DEFAULT_INDICATOR_ID = "i066"
-DEFAULT_YEAR = 2025  # Année fictive car indicateur cumulatif
+DEFAULT_YEAR = 2026
 DEFAULT_SOURCE = (
     "https://www.data.gouv.fr/api/1/datasets/r/2ce43ade-8d2c-4d1d-81da-ca06c82abc68"
 )
@@ -53,96 +54,62 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
-def fetch_raw_csv() -> pd.DataFrame:
-    """Télécharge le fichier des pharmacies et retourne le DataFrame"""
-    raw_dir = get_raw_dir()
-    logger.info("Téléchargement des données de pharmacies")
-    download_file(URL, dl_to=raw_dir, filename="pharmacies.csv")
-
-    # Lire le CSV
-    path_file = raw_dir / "pharmacies.csv"
-    if not path_file.exists():
-        raise FileNotFoundError(f"Fichier {path_file} introuvable après téléchargement")
-
-    return pd.read_csv(path_file, sep=";", low_memory=False)
-
-
-def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-    raw_dir = get_raw_dir()
-    # Chargement de la table epci
-    df_epci = create_dataframe_epci(raw_dir)
-
-    # Chargement de la table des communes
-    df_com = create_dataframe_communes(raw_dir)
+def pharma_traitement():
+    # chargement des données des pharmacies
+    url = (
+        "https://www.data.gouv.fr/api/1/datasets/r/2ce43ade-8d2c-4d1d-81da-ca06c82abc68"
+    )
+    content = download_file(url)
+    df_pharma = pd.read_csv(
+        BytesIO(content), sep=";", dtype=str, skiprows=1, header=None
+    )
 
     # Traitement des données de pharmacies
-    df = df.iloc[:, [15, 19]]
-    df.rename(columns={19: "type", 15: "code_insee"}, inplace=True)
-    df = df.loc[df["type"].str.startswith("Phar")].reset_index(drop=True)
+    df_pharma = df_pharma.iloc[:, [12, 13, 15, 19]]
+    df_pharma.rename(
+        columns={19: "type", 15: "code_postal", 12: "code_com", 13: "dept"},
+        inplace=True,
+    )
+    df_pharma["code_insee"] = df_pharma["dept"] + df_pharma["code_com"]
+    df_pharma = df_pharma.loc[
+        df_pharma["type"].str.startswith("Pharmacie")
+    ].reset_index(drop=True)
 
-    def extract_code_postal(x):
-        """Extrait le code postal depuis le champ code_insee."""
-        if pd.isna(x):
-            return None
-        try:
-            x_str = str(x).strip()
-            if " " in x_str:
-                return x_str.split(" ")[0]
-            return x_str
-        except Exception:
-            return None
+    # Correction des codes insee de Paris, Lyon, Marseille pour les faire correspondre à ceux de l'INSEE
+    df_pharma = df_pharma.dropna(subset=["code_insee"])
+    df_pharma.loc[df_pharma["code_insee"].str.startswith("75"), "code_insee"] = "75056"
+    df_pharma.loc[df_pharma["code_insee"].str.startswith("693"), "code_insee"] = "69123"
+    df_pharma.loc[df_pharma["code_insee"].str.startswith("132"), "code_insee"] = "13055"
 
-    df["code_postal"] = df["code_insee"].apply(extract_code_postal)
+    return df_pharma
 
-    df.drop(columns=["code_insee"], inplace=True)
 
-    # Jointure avec les données des communes pour récupérer le nombre de pharma par commune
-    query = """
-    SELECT
-        df_com.epci_code AS id_epci,
-        'i066' AS id_indicator,
-        COUNT(df.code_postal) AS valeur_brute,
-        '2025' AS annee
-    FROM df
-    LEFT JOIN df_com
-        ON df.code_postal = df_com.code_postal
-    GROUP BY id_epci
-    HAVING id_epci != 'ZZZZZZZZZ'
-    """
+def clean_and_prepare_df() -> pd.DataFrame:
+    raw_dir = get_raw_dir()
+    # Chargement de df_pharma
+    df_pharma = pharma_traitement()
 
-    result = duckdb.sql(query).df()
+    # Chargement de la table epci
+    df_epci = pd.read_csv(raw_dir / "epci_membres.csv", sep=",")
 
-    # On garde la population totale des epci
-    query = """ 
-    SELECT 
-        DISTINCT siren, 
-        TRY_CAST(REPLACE(total_pop_tot,' ','') AS INTEGER) as total_pop 
-        FROM df_epci
-    """
-    df_epci_pop_tot = duckdb.sql(query)
-
-    # Calcul du nombre de pharmacie pour 10000 habitants
     query_final = """
-    SELECT 
-        result.id_epci,
-        result.id_indicator,
-        ROUND((result.valeur_brute/ df_epci_pop_tot.total_pop) * 10000, 2) AS valeur_brute,
-        result.annee
-    FROM df_epci_pop_tot
-    LEFT JOIN result 
-    ON result.id_epci = df_epci_pop_tot.siren
-    WHERE result.id_epci IS NOT NULL
-    """
+    SELECT
+        df_epci.dept_epci AS dept_id,
+        df_epci.siren AS id_epci,
+        df_epci.epci_nom AS epci_lib,
+        'i066' AS id_indicator,
+        round(COUNT(df_pharma.code_insee) / cast(df_epci.total_pop_mun AS FLOAT) * 10000,2) AS valeur_brute,
+        '2026' AS annee
+    FROM df_epci
+    LEFT JOIN df_pharma AS df_pharma
+        ON df_pharma.code_insee = df_epci.code_insee
+    GROUP BY df_epci.siren, df_epci.dept_epci, df_epci.epci_nom, df_epci.total_pop_mun
+    ORDER BY df_epci.dept_epci, df_epci.siren
+        """
 
-    return duckdb.sql(query_final).df()
+    df_densite_pharma_final = duckdb.sql(query_final)
+
+    return df_densite_pharma_final.df()
 
 
 def transform_payload(df: pd.DataFrame) -> Iterator[RawValue]:
@@ -202,8 +169,7 @@ def run(indicator_id: str) -> None:
         ensure_indicator_exists(session, indicator_id)
 
         # Téléchargement, extraction et nettoyage des données
-        df = fetch_raw_csv()
-        df_processed = clean_and_prepare_df(df)
+        df_processed = clean_and_prepare_df()
 
         # Transformation
         rows = list(transform_payload(df_processed))
@@ -236,8 +202,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.dry_run:
-        df = fetch_raw_csv()
-        df_processed = clean_and_prepare_df(df)
+        df_processed = clean_and_prepare_df()
         rows = list(transform_payload(df_processed))
         print(
             json.dumps(

@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 from typing import Iterable, Iterator  # ✅ Correction
 import zipfile
+from io import BytesIO
 
 import pandas as pd
 import duckdb
@@ -27,7 +28,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import get_raw_dir, download_file
 
 logger = logging.getLogger(__name__)
 
@@ -51,42 +52,39 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
-def fetch_api_payload() -> tuple[pd.DataFrame, Path]:
+def traitement_catnat() -> tuple[pd.DataFrame, Path]:
     """Télécharge, extrait et retourne les données GASPAR + le chemin raw_dir."""
-    raw_dir = get_raw_dir
 
-    zip_path = raw_dir / "gaspar.zip"
-    logger.info("Téléchargement des données GASPAR...")
-    download_file(URL, dl_to=raw_dir, filename="gaspar.zip")
+    # Define URLs and file paths
+    URL = (
+        "https://www.data.gouv.fr/api/1/datasets/r/d6fb9e18-b66b-499c-8284-46a3595579cc"
+    )
+    zip_content = download_file(URL)
+    with zipfile.ZipFile(BytesIO(zip_content)) as z:
+        with z.open("catnat_gaspar.csv") as f:
+            df_cat_nat = pd.read_csv(f, sep=";", low_memory=False)
 
-    # Extraction et nettoyage
-    logger.info("Extraction et nettoyage...")
-    with zipfile.ZipFile(zip_path, "r") as z:
-        extracted_files = z.namelist()
-        z.extractall(path=raw_dir)
+    # On modifie les code insee de Paris, Lyon, Marseille pour les faire correspondre à ceux de l'INSEE
+    df_cat_nat.loc[df_cat_nat["cod_commune"].str.startswith("75"), "cod_commune"] = (
+        "75056"
+    )
+    df_cat_nat.loc[df_cat_nat["cod_commune"].str.startswith("693"), "cod_commune"] = (
+        "69123"
+    )
+    df_cat_nat.loc[df_cat_nat["cod_commune"].str.startswith("132"), "cod_commune"] = (
+        "13055"
+    )
 
-    # Supprimer uniquement les fichiers extraits du ZIP (sauf catnat*.csv)
-    for file in extracted_files:
-        if not file.startswith("catnat"):
-            file_path = raw_dir / file
-            if file_path.exists() and file_path.is_file():
-                file_path.unlink(missing_ok=True)
-                logger.debug(f"Suppression de {file}")
-
-    # Lire le CSV
-    path_file = raw_dir / "catnat_gaspar.csv"
-    if not path_file.exists():
-        raise FileNotFoundError(f"Fichier {path_file} introuvable après extraction")
-
-    return pd.read_csv(path_file, sep=";", low_memory=False)
+    # nombre de cat nat par commune sur 40 ans
+    query = """
+    SELECT 
+        cod_commune AS code_insee, 
+        count(*) AS nb_cat_nat
+    FROM df_cat_nat
+    GROUP BY cod_commune
+    """
+    df_cat_nat = duckdb.sql(query).df()
+    return df_cat_nat
 
 
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -95,37 +93,48 @@ def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     raw_dir = get_raw_dir()
 
     # Chargement de la table epci
-    df_epci = create_dataframe_epci(raw_dir)
+    df_epci = pd.read_csv(raw_dir / "epci_membres.csv", sep=",")
 
-    # Chargement de la table des communes
-    df_com = create_dataframe_communes(raw_dir)
-
+    # Surface de chaque epci et nb de cat nat par epci sur 40 ans
     query = """
-    WITH cat_nat_counts AS (
-        SELECT 
-            cod_commune AS code_insee, 
-            count(*) AS nb_cat_nat
-        FROM df_cat_nat
-        GROUP BY cod_commune
-    ),
-    epci_stats AS (
-        SELECT 
-            df_com.epci_code AS id_epci,
-            SUM(cat_nat_counts.nb_cat_nat) AS nb_cat_nat_total,
-            SUM(df_com.superficie_km2) AS superficie_epci_km2
-        FROM df_com
-        LEFT JOIN cat_nat_counts ON df_com.code_insee = cat_nat_counts.code_insee
-        WHERE (df_com.superficie_km2 IS NOT NULL) AND (df_com.epci_code != 'ZZZZZZZZZ')
-        GROUP BY df_com.epci_code
-    )
+    WITH df_temp AS (
     SELECT 
-        id_epci,
-        ROUND(nb_cat_nat_total / superficie_epci_km2, 3) AS valeur_brute
-    FROM epci_stats
-    WHERE nb_cat_nat_total IS NOT NULL
+        df_epci.siren AS siren,
+        sum(df_cat_nat.nb_cat_nat) as nb_cat_nat_total,
+        sum(df_epci.superficie_km2) as superficie_km2
+    FROM df_epci
+    LEFT JOIN df_cat_nat
+    ON df_epci.code_insee = df_cat_nat.code_insee
+    GROUP BY df_epci.siren
+    )
+
+    SELECT 
+        siren,
+        ROUND(nb_cat_nat_total / superficie_km2, 3) AS cat_nat_per_km2
+    FROM df_temp
     """
 
-    return duckdb.sql(query).df()
+    df_cat_nat_temp = duckdb.sql(query)
+
+    # Ajout du nom des epci
+    query_complete = """
+    SELECT 
+        df_epci.dept_epci as dept_id,
+        CAST(df_epci.siren AS VARCHAR) as id_epci,
+        df_epci.epci_nom as epci_lib,
+        'i158' AS id_indicator,
+        df_cat_nat_temp.cat_nat_per_km2 as valeur_brute,
+        '2025' AS annee
+    FROM df_epci
+    LEFT JOIN df_cat_nat_temp
+    ON df_cat_nat_temp.siren = df_epci.siren
+    GROUP BY df_epci.dept_epci, df_epci.siren, df_epci.epci_nom, df_cat_nat_temp.cat_nat_per_km2
+    ORDER BY df_epci.dept_epci, df_epci.siren
+    """
+
+    df_cat_nat_final = duckdb.sql(query_complete)
+
+    return df_cat_nat_final.df()
 
 
 def transform_payload(df: pd.DataFrame) -> Iterator[RawValue]:
@@ -186,8 +195,8 @@ def run(indicator_id: str) -> None:
         ensure_indicator_exists(session, indicator_id)
 
         # Téléchargement et extraction
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_cat_nat = traitement_catnat()
+        df_processed = clean_and_prepare_df(df_cat_nat)
 
         # Transformation
         rows = list(transform_payload(df_processed))
@@ -202,6 +211,7 @@ def run(indicator_id: str) -> None:
     finally:
         session.close()
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Téléchargement de données -> i158")
     parser.add_argument("--indicator", default=DEFAULT_INDICATOR_ID, help="i158")
@@ -212,14 +222,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     return parser
 
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
     parser = build_parser()
     args = parser.parse_args()
 
     if args.dry_run:
-        df = fetch_raw_csv()
-        df_processed = clean_and_prepare_df(df)
+        df_cat_nat = traitement_catnat()
+        df_processed = clean_and_prepare_df(df_cat_nat)
         rows = list(transform_payload(df_processed))
         print(
             json.dumps(

@@ -29,7 +29,6 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +36,7 @@ logger = logging.getLogger(__name__)
 URL = "https://data.caf.fr/api/explore/v2.1/catalog/datasets/txcouv_pe_epci_dev/records?limit=20&refine=annee%3A%222023%22"
 DEFAULT_INDICATOR_ID = "i130"
 DEFAULT_YEAR = 2023  # Année fictive car indicateur cumulatif
-DEFAULT_SOURCE = (
-    "data.caf.fr"
-)
+DEFAULT_SOURCE = "data.caf.fr"
 
 
 @dataclass
@@ -53,21 +50,9 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
 def fetch_api_payload() -> pd.DataFrame:
     """Charge le fichier des lieux de covoiturage et retourne le DataFrame"""
-
-    raw_dir = get_raw_dir()
-
-    # Chargement des donnée via l'API
-    # Define URLs and file paths
+    # Chargement des donnée via l'API de data.caf
     offset = [100 * i for i in range(0, 13)]
     for offset in offset:
         url = f"https://data.caf.fr/api/explore/v2.1/catalog/datasets/txcouv_pe_epci/records?limit=100&offset={offset}&refine=annee%3A%222023%22"

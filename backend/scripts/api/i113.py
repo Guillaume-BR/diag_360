@@ -2,18 +2,20 @@
 """
 Indicateur i113 : Part de la Surface Agricole Utile sur la superficie totale du territoire
 Source : data.gouv.fr
-URL : https://www.data.gouv.fr/api/1/datasets/r/dbdd3481-107b-4eed-b66a-7f9dda1c7b78
+URL : "https://www.data.gouv.fr/api/1/datasets/r/b27d31a6-107b-46ee-8427-518799b488f0"
 
 """
 from __future__ import annotations
 
 import argparse
+from io import BytesIO
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 import sys
-from typing import Iterable, Iterator  # ✅ Correction
+from typing import Iterable, Iterator
+import zipfile
 
 import pandas as pd
 import duckdb
@@ -28,17 +30,15 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import download_file, get_raw_dir
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-URL = "https://www.data.gouv.fr/api/1/datasets/r/dbdd3481-107b-4eed-b66a-7f9dda1c7b78"
+URL = "https://www.data.gouv.fr/api/1/datasets/r/b27d31a6-107b-46ee-8427-518799b488f0"
 DEFAULT_INDICATOR_ID = "i113"
-DEFAULT_YEAR = 2025  
-DEFAULT_SOURCE = (
-    "data.gouv.fr"
-)
+DEFAULT_YEAR = 2025
+DEFAULT_SOURCE = "data.gouv.fr"
 
 
 @dataclass
@@ -52,63 +52,66 @@ class RawValue:
     meta: dict | None = None
 
 
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
-def fetch_api_payload() -> pd.DataFrame:
+def traitement_sau() -> pd.DataFrame:
     """Charge le fichier des données principales et retourne le DataFrame"""
 
-    raw_dir = get_raw_dir()
+    df_sau = pd.read_csv(URL, sep=",")
 
-    # Téléchagement de la table de la sau
-    url = (
-        "https://www.data.gouv.fr/api/1/datasets/r/022cb00f-38f2-4fe7-8895-e3467d3d9255"
-    )
-    download_file(url, extract_to=raw_dir, filename="sau_2025.csv")
-    path_file = raw_dir / "sau_2025.csv"
-    logger.info("Téléchargement des données des sau")
-    return pd.read_csv(path_file, sep = ",")
+    # Traitement de la table sau
+    df_sau = df_sau[df_sau["date_mesure"].str.startswith("2020")].copy()
+    df_sau["geocode_commune"] = df_sau["geocode_commune"].astype(str).str.zfill(5)
+    return df_sau
 
 
-def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
+def recup_communes() -> pd.DataFrame:
+    url = "https://www.insee.fr/fr/statistiques/fichier/4505239/ODD_PARQUET.zip"
+    zip_content = download_file(url)
+    with zipfile.ZipFile(BytesIO(zip_content)) as z:
+        with z.open("ODD_COM.parquet") as f:
+            df_communes = duckdb.read_parquet(f)
+
+        # Traitement de la table des communes pour ne garder que les codes insee et les surfaces
+    query = """ 
+    SELECT 
+        codgeo,
+        libgeo,
+        A2021 AS surface
+    FROM df_communes
+    WHERE variable = 'surface'
+    """
+
+    df_surf_com = duckdb.sql(query)
+    return df_surf_com
+
+
+def clean_and_prepare_df(
+    df_sau: pd.DataFrame, df_surf_com: pd.DataFrame
+) -> pd.DataFrame:
     """Calcule l'indicateur via DuckDB à partir des données."""
 
     raw_dir = get_raw_dir()
     # Téléchargement des données epci pour jointure
-    df_epci = create_dataframe_epci(raw_dir)
+    df_epci = pd.read_csv(raw_dir / "epci_membres.csv", sep=",")
 
-    # Téléchargement de la table com
-    df_com = create_dataframe_communes(raw_dir)
-
-    # Traitement de la table sau
-    df = df[df["date_mesure"].str.startswith("2020")]
-
-    # Jointure entre df_sau et df_surface_epci
-    query_bdd = """
-    WITH df_surface_epci AS (
-        SELECT 
-            epci_code AS siren,
-            SUM(superficie_km2) AS superficie_km2
-        FROM df_com
-        WHERE (superficie_km2 IS NOT NULL) AND (epci_code != 'ZZZZZZZZZ')
-        GROUP BY epci_code),
-
+    query = """
     SELECT
-        df_surface_epci.siren AS id_epci,
+        dept_epci as dept_id,
+        siren as id_epci,
+        epci_nom AS lib_epci,
         'i113' AS id_indicator,
-        ROUND((df_sau.valeur / 100) / df_surface_epci.superficie_km2 * 100,1) AS valeur_brute,
-        '2025' AS annee
-    FROM df_surface_epci
+        ROUND(sum(df_sau.valeur/100) / sum(surface)  * 100,3) AS valeur_brute,
+        '2020' AS annee
+    FROM df_epci
+    LEFT JOIN df_surf_com 
+        ON df_epci.code_insee = df_surf_com.codgeo
     LEFT JOIN df_sau
-    ON df_sau.geocode_epci = df_surface_epci.siren
+        ON df_epci.code_insee = df_sau.geocode_commune
+    GROUP BY siren, dept_epci, epci_nom
+    ORDER BY dept_epci, siren
     """
 
-    return duckdb.sql(query_bdd).df()
+    df_sau_final = duckdb.sql(query)
+    return df_sau_final.df()
 
 
 def transform_payload(df: pd.DataFrame) -> Iterator[RawValue]:
@@ -169,8 +172,9 @@ def run(indicator_id: str) -> None:
         ensure_indicator_exists(session, indicator_id)
 
         # Téléchargement et extraction
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_sau = traitement_sau()
+        df_surf_com = recup_communes()
+        df_processed = clean_and_prepare_df(df_sau, df_surf_com)
 
         # Transformation
         rows = list(transform_payload(df_processed))
@@ -207,8 +211,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.dry_run:
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_sau = traitement_sau()
+        df_surf_com = recup_communes()
+        df_processed = clean_and_prepare_df(df_sau, df_surf_com)
         rows = list(transform_payload(df_processed))
         print(
             json.dumps(

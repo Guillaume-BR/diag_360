@@ -28,7 +28,7 @@ from app.models import Indicator, IndicatorValue
 # Import de vos fonctions utilitaires existantes
 scripts_path = backend_path / "scripts"
 sys.path.append(str(scripts_path))
-from utils.functions import *
+from utils.functions import get_raw_dir
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ URL = "https://mobilite-durable-tdb.din.developpement-durable.gouv.fr/indicateur
 DEFAULT_INDICATOR_ID = "i150"
 DEFAULT_YEAR = 2024  # Année fictive car indicateur cumulatif
 DEFAULT_SOURCE = "i150.csv"
+
 
 @dataclass
 class RawValue:
@@ -47,14 +48,6 @@ class RawValue:
     unit: str | None = None
     source: str | None = None
     meta: dict | None = None
-
-
-def get_raw_dir() -> Path:
-    """Retourne le chemin du répertoire source, le crée si nécessaire."""
-    base_dir = Path(__file__).resolve().parent.parent
-    raw_dir = base_dir / "source"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
 
 
 def fetch_api_payload() -> pd.DataFrame:
@@ -78,26 +71,26 @@ def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     raw_dir = get_raw_dir()
 
     # Téléchargement des données epci pour jointure
-    df_epci = create_dataframe_epci(raw_dir)
+    df_epci = pd.read_csv(raw_dir / "epci_membres.csv", sep=",")
 
     # Calcul par epci du nombre de trajets de covoiturage pour 10 000 habitants
-    query_bdd = """
-    WITH df_epci_filtered AS (
-        SELECT 
-            DISTINCT siren,
-            TRY_CAST(REPLACE(total_pop_tot,' ','') AS DOUBLE) AS total_pop_tot
-        FROM df_epci)
-
+    query = """ 
     SELECT
+        e1.dept_epci AS dept_id,
         e1.siren as id_epci,
+        e1.epci_nom AS epci_lib,
         'i150' AS id_indicator,
         ROUND((1.0*e2.valeur)/e1.total_pop_tot*10000 ,3) AS valeur_brute,
         '2024' AS annee
-    FROM df_epci_filtered e1
-    LEFT JOIN df e2
-    ON e2.territoryid = e1.siren
+    FROM df_epci e1
+    LEFT JOIN df_nb_covoit e2
+        ON e2.territoryid = e1.siren
+    GROUP BY e1.dept_epci, e1.siren, e1.epci_nom, e2.valeur, e1.total_pop_tot
+    ORDER BY e1.dept_epci, e1.siren
     """
-    return duckdb.sql(query_bdd).df()
+
+    df_nb_trajet_complete = duckdb.sql(query)
+    return df_nb_trajet_complete.df()
 
 
 def transform_payload(df: pd.DataFrame) -> Iterator[RawValue]:
@@ -158,8 +151,8 @@ def run(indicator_id: str) -> None:
         ensure_indicator_exists(session, indicator_id)
 
         # Téléchargement et extraction
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_nb_covoit = fetch_api_payload()
+        df_processed = clean_and_prepare_df(df_nb_covoit)
 
         # Transformation
         rows = list(transform_payload(df_processed))
@@ -196,8 +189,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.dry_run:
-        df = fetch_api_payload()
-        df_processed = clean_and_prepare_df(df)
+        df_nb_covoit = fetch_api_payload()
+        df_processed = clean_and_prepare_df(df_nb_covoit)
         rows = list(transform_payload(df_processed))
         print(
             json.dumps(

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Iterable, Iterator
 
 from pathlib import Path
-import pandas as pd 
+import pandas as pd
 
 from sqlalchemy import select
 
@@ -43,17 +43,18 @@ class RawValue:
 
 
 def fetch_raw_csv(filename: str, sep=";", header=2) -> pd.DataFrame:
-    script_dir = Path(__file__).parent      # scripts/api/
+    script_dir = Path(__file__).parent  # scripts/api/
     csv_path = script_dir.parent / "source" / filename  # scripts/source/i032.csv
     return pd.read_csv(csv_path, sep=sep, header=header)
 
 
 def clean_and_prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-    df = (df.rename(
-            columns={"Code": "epci_id",
-                    "Part des logements sur-occupés hors studios d'une seule personne 2021": "value",})
-        .drop(columns=["Libellé"])
-        )
+    df = df.rename(
+        columns={
+            "Code": "epci_id",
+            "Part des logements sur-occupés hors studios d'une seule personne 2021": "value",
+        }
+    ).drop(columns=["Libellé"])
 
     df["indicator_id"] = "i032"
     df["year"] = 2021
@@ -77,7 +78,7 @@ def transform_df_to_raw_values(df: pd.DataFrame) -> Iterator[RawValue]:
             value=value,
             unit=str(row["unit"]),
             source=row["source"],
-            meta={}
+            meta={},
         )
 
 
@@ -104,15 +105,19 @@ def persist_values(session, rows: Iterable[RawValue]) -> int:
 def ensure_indicator_exists(session, indicator_id: str) -> None:
     """Optionnel : vérifier que l'indicateur ciblé existe côté base."""
 
-    exists = session.execute(select(Indicator.id).where(Indicator.id == indicator_id)).scalar_one_or_none()
+    exists = session.execute(
+        select(Indicator.id).where(Indicator.id == indicator_id)
+    ).scalar_one_or_none()
     if not exists:
-        raise ValueError(f"L'indicateur {indicator_id} est introuvable en base. Importez d'abord la table de référence.")
+        raise ValueError(
+            f"L'indicateur {indicator_id} est introuvable en base. Importez d'abord la table de référence."
+        )
 
 
 def run(csv_filename: str) -> None:
     session = SessionLocal()
     try:
-        ensure_indicator_exists(session, "i032") # adapter avec l'indicateur_id
+        ensure_indicator_exists(session, "i032")  # adapter avec l'indicateur_id
         df = fetch_raw_csv(csv_filename)
         df = clean_and_prepare_df(df)
         rows = list(transform_df_to_raw_values(df))
@@ -126,8 +131,14 @@ def run(csv_filename: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description= "Import CSV -> valeur_indicateur (indicateur i032)") # "Import CSV -> valeur_indicateur"
-    parser.add_argument("--csv", default= "i032.csv", help= "Nom du fichier CSV à importer (dans scripts/source/)",) # adapter le default
+    parser = argparse.ArgumentParser(
+        description="Import CSV -> valeur_indicateur (indicateur i032)"
+    )  # "Import CSV -> valeur_indicateur"
+    parser.add_argument(
+        "--csv",
+        default="i032.csv",
+        help="Nom du fichier CSV à importer (dans scripts/source/)",
+    )  # adapter le default
     parser.add_argument(
         "--dry-run",
         action="store_true",

@@ -55,7 +55,9 @@ def fetch_api_payload(*, indicator_id: str, year: int) -> dict:
     return response.json()
 
 
-def transform_payload(payload: dict, *, indicator_id: str, year: int) -> Iterator[RawValue]:
+def transform_payload(
+    payload: dict, *, indicator_id: str, year: int
+) -> Iterator[RawValue]:
     """Convertir la réponse API en objets `RawValue`.
 
     Adapter la logique en fonction du format réel (JSON/CSV...).
@@ -101,9 +103,13 @@ def persist_values(session, rows: Iterable[RawValue]) -> int:
 def ensure_indicator_exists(session, indicator_id: str) -> None:
     """Optionnel : vérifier que l'indicateur ciblé existe côté base."""
 
-    exists = session.execute(select(Indicator.id).where(Indicator.id == indicator_id)).scalar_one_or_none()
+    exists = session.execute(
+        select(Indicator.id).where(Indicator.id == indicator_id)
+    ).scalar_one_or_none()
     if not exists:
-        raise ValueError(f"L'indicateur {indicator_id} est introuvable en base. Importez d'abord la table de référence.")
+        raise ValueError(
+            f"L'indicateur {indicator_id} est introuvable en base. Importez d'abord la table de référence."
+        )
 
 
 def run(indicator_id: str, year: int) -> None:
@@ -113,7 +119,9 @@ def run(indicator_id: str, year: int) -> None:
         payload = fetch_api_payload(indicator_id=indicator_id, year=year)
         rows = list(transform_payload(payload, indicator_id=indicator_id, year=year))
         if not rows:
-            logger.warning("Aucune ligne à insérer (indicator=%s, year=%s)", indicator_id, year)
+            logger.warning(
+                "Aucune ligne à insérer (indicator=%s, year=%s)", indicator_id, year
+            )
             return
         count = persist_values(session, rows)
         logger.info("%s lignes upsertées dans valeur_indicateur", count)
@@ -122,9 +130,17 @@ def run(indicator_id: str, year: int) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Template d'appel API -> valeur_indicateur")
-    parser.add_argument("--indicator", default=DEFAULT_INDICATOR_ID, help="ID indicateur Diag360 (ex: i123)")
-    parser.add_argument("--year", type=int, default=DEFAULT_YEAR, help="Année de référence")
+    parser = argparse.ArgumentParser(
+        description="Template d'appel API -> valeur_indicateur"
+    )
+    parser.add_argument(
+        "--indicator",
+        default=DEFAULT_INDICATOR_ID,
+        help="ID indicateur Diag360 (ex: i123)",
+    )
+    parser.add_argument(
+        "--year", type=int, default=DEFAULT_YEAR, help="Année de référence"
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -140,7 +156,9 @@ def main() -> None:
 
     if args.dry_run:
         payload = fetch_api_payload(indicator_id=args.indicator, year=args.year)
-        rows = list(transform_payload(payload, indicator_id=args.indicator, year=args.year))
+        rows = list(
+            transform_payload(payload, indicator_id=args.indicator, year=args.year)
+        )
         print(json.dumps([row.__dict__ for row in rows], indent=2, ensure_ascii=False))
         return
 
